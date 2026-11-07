@@ -87,6 +87,15 @@ fn collect_items(nodes: &[Node], out: &mut Vec<Id>) {
     }
 }
 
+fn collect_ids(node: &Node, out: &mut Vec<Id>) {
+    out.push(node.id().clone());
+    if let Node::Folder(f) = node {
+        for c in &f.children {
+            collect_ids(c, out);
+        }
+    }
+}
+
 fn contains_id(nodes: &[Node], id: &Id) -> bool {
     nodes
         .iter()
@@ -260,7 +269,28 @@ impl Manifest {
         item: Id,
         index: Option<usize>,
     ) -> Result<(), ManifestError> {
-        let exists = contains_id(&self.tree, &item);
+        let node = Node::Item {
+            id: item,
+            extra: Map::new(),
+        };
+        self.insert_node(folder, node, index)
+    }
+
+    /// Inserts a node, with everything under it, into `folder` (`None` for the
+    /// top level), clamping the index like `insert_item`. If any id in the
+    /// subtree is already in the tree, or appears twice in it, nothing changes.
+    pub fn insert_node(
+        &mut self,
+        folder: Option<&Id>,
+        node: Node,
+        index: Option<usize>,
+    ) -> Result<(), ManifestError> {
+        let mut ids = Vec::new();
+        collect_ids(&node, &mut ids);
+        let mut seen = HashSet::new();
+        let dup = ids
+            .into_iter()
+            .find(|id| contains_id(&self.tree, id) || !seen.insert(id.clone()));
         let siblings = match folder {
             None => &mut self.tree,
             Some(fid) => {
@@ -269,17 +299,11 @@ impl Manifest {
                     .children
             }
         };
-        if exists {
-            return Err(ManifestError::DuplicateId(item));
+        if let Some(id) = dup {
+            return Err(ManifestError::DuplicateId(id));
         }
         let at = index.map_or(siblings.len(), |i| i.min(siblings.len()));
-        siblings.insert(
-            at,
-            Node::Item {
-                id: item,
-                extra: Map::new(),
-            },
-        );
+        siblings.insert(at, node);
         Ok(())
     }
 
@@ -458,6 +482,57 @@ mod tests {
         assert!(matches!(m.remove_node(&item), Some(Node::Item { .. })));
         assert!(m.item_ids().is_empty());
         assert!(m.remove_node(&item).is_none());
+    }
+
+    fn folder_with(items: &[Id]) -> Node {
+        Node::Folder(FolderNode {
+            id: Id::new(),
+            title: "Sub".into(),
+            path: "manuscript/sub".into(),
+            synopsis: String::new(),
+            children: items
+                .iter()
+                .map(|i| Node::Item {
+                    id: i.clone(),
+                    extra: Map::new(),
+                })
+                .collect(),
+            extra: Map::new(),
+        })
+    }
+
+    #[test]
+    fn insert_node_places_a_subtree_and_clamps_the_index() {
+        let (mut m, top, part, _) = nested();
+        let node = folder_with(&[Id::new()]);
+        let nid = node.id().clone();
+        m.insert_node(Some(&top), node, Some(99)).unwrap();
+        assert_eq!(m.parent_of(&nid), Some((Some(top.clone()), 1)));
+        let node = folder_with(&[]);
+        let nid = node.id().clone();
+        m.insert_node(Some(&part), node, Some(0)).unwrap();
+        assert_eq!(m.parent_of(&nid), Some((Some(part), 0)));
+        let node = folder_with(&[]);
+        let nid = node.id().clone();
+        m.insert_node(None, node, None).unwrap();
+        let n = m.tree.len() - 1;
+        assert_eq!(m.parent_of(&nid), Some((None, n)));
+    }
+
+    #[test]
+    fn insert_node_refuses_any_duplicate_id_and_changes_nothing() {
+        let (mut m, top, _, item) = nested();
+        let before = m.clone();
+        let r = m.insert_node(Some(&top), folder_with(&[Id::new(), item.clone()]), None);
+        assert!(matches!(r, Err(ManifestError::DuplicateId(ref i)) if *i == item));
+        assert_eq!(m, before);
+        let twice = Id::new();
+        let r = m.insert_node(None, folder_with(&[twice.clone(), twice.clone()]), None);
+        assert!(matches!(r, Err(ManifestError::DuplicateId(ref i)) if *i == twice));
+        assert_eq!(m, before);
+        let r = m.insert_node(Some(&Id::new()), folder_with(&[]), None);
+        assert!(matches!(r, Err(ManifestError::FolderNotFound(_))));
+        assert_eq!(m, before);
     }
 
     #[test]

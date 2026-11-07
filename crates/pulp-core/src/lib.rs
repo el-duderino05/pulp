@@ -10,4 +10,5 @@ pub mod project;
 pub mod schema;
 pub mod storage;
 pub mod text;
+pub mod trash;
 pub mod version;

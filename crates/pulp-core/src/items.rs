@@ -18,7 +18,7 @@ use crate::text::normalize_text;
 use crate::version::check_readable;
 
 type Moves = Vec<(RelPath, RelPath)>;
-type Snapshot = (Manifest, HashMap<Id, RelPath>);
+pub(crate) type Snapshot = (Manifest, HashMap<Id, RelPath>);
 
 /// The files that can sit next to a document and travel with it:
 /// `<stem>.comments.json` and `<file>.meta.json`. Callers keep only those
@@ -39,7 +39,7 @@ fn fold(name: &str) -> String {
 }
 
 /// `p` with the whole-segment prefix `old` swapped for `new`, if it has it.
-fn reprefix(p: &str, old: &str, new: &str) -> Option<String> {
+pub(crate) fn reprefix(p: &str, old: &str, new: &str) -> Option<String> {
     if p == old {
         return Some(new.to_string());
     }
@@ -47,7 +47,7 @@ fn reprefix(p: &str, old: &str, new: &str) -> Option<String> {
     Some(format!("{new}/{rest}"))
 }
 
-fn repath_folders(nodes: &mut [Node], old: &str, new: &str) {
+pub(crate) fn repath_folders(nodes: &mut [Node], old: &str, new: &str) {
     for n in nodes {
         if let Node::Folder(f) = n {
             if let Some(p) = reprefix(&f.path, old, new) {
@@ -318,7 +318,7 @@ impl<S: Storage> Project<S> {
 
     /// Reads the file at the indexed path. It must parse, be readable by this
     /// version, and carry `id`; otherwise nothing may be written to it.
-    fn read_verified(&self, id: &Id) -> Result<(RelPath, ItemFile), ProjectError> {
+    pub(crate) fn read_verified(&self, id: &Id) -> Result<(RelPath, ItemFile), ProjectError> {
         let path = self
             .index
             .get(id)
@@ -336,7 +336,7 @@ impl<S: Storage> Project<S> {
     }
 
     /// The disk folder of a manifest folder (`None` is the project root).
-    fn disk_dir(&self, folder: Option<&Id>) -> Result<RelPath, ProjectError> {
+    pub(crate) fn disk_dir(&self, folder: Option<&Id>) -> Result<RelPath, ProjectError> {
         let Some(id) = folder else {
             return Ok(RelPath::root());
         };
@@ -350,7 +350,7 @@ impl<S: Storage> Project<S> {
     }
 
     /// Names in a disk folder; a missing folder has none.
-    fn entries_of(&self, dir: &RelPath) -> Result<Vec<String>, ProjectError> {
+    pub(crate) fn entries_of(&self, dir: &RelPath) -> Result<Vec<String>, ProjectError> {
         match self.storage.list(dir) {
             Ok(v) => Ok(v.into_iter().map(|e| e.name).collect()),
             Err(e) if e.cause() == ErrorCause::NotFound => Ok(Vec::new()),
@@ -361,7 +361,7 @@ impl<S: Storage> Project<S> {
     /// The first unique name whose own path (and, for documents, every
     /// companion path) is free on disk. `own` is the current name when
     /// renaming: choosing it again means no move is needed.
-    fn pick_name(
+    pub(crate) fn pick_name(
         &self,
         dir: &RelPath,
         slug: &str,
@@ -389,7 +389,7 @@ impl<S: Storage> Project<S> {
     }
 
     /// The document first, then each companion that exists.
-    fn plan_moves(&self, old: &RelPath, new: &RelPath) -> Moves {
+    pub(crate) fn plan_moves(&self, old: &RelPath, new: &RelPath) -> Moves {
         let mut moves = vec![(old.clone(), new.clone())];
         for (from, to) in companions_of(old).into_iter().zip(companions_of(new)) {
             if self.storage.exists(&from) {
@@ -401,7 +401,7 @@ impl<S: Storage> Project<S> {
 
     /// Renames in order, refusing to replace anything. If one fails, the ones
     /// already done are put back.
-    fn move_files(&self, moves: &[(RelPath, RelPath)]) -> Result<(), ProjectError> {
+    pub(crate) fn move_files(&self, moves: &[(RelPath, RelPath)]) -> Result<(), ProjectError> {
         for (i, (from, to)) in moves.iter().enumerate() {
             if self.storage.exists(to) {
                 self.undo_moves(&moves[..i]);
@@ -417,7 +417,7 @@ impl<S: Storage> Project<S> {
 
     /// Best effort: moves each file back, last first, unless something now
     /// sits at the old place.
-    fn undo_moves(&self, done: &[(RelPath, RelPath)]) {
+    pub(crate) fn undo_moves(&self, done: &[(RelPath, RelPath)]) {
         for (from, to) in done.iter().rev() {
             if !self.storage.exists(from) {
                 let _ = self.storage.rename(to, from);
@@ -426,24 +426,24 @@ impl<S: Storage> Project<S> {
     }
 
     /// Removes a folder this call just made (only if it is still empty).
-    fn drop_dir(&self, dir: &RelPath, made: bool) {
+    pub(crate) fn drop_dir(&self, dir: &RelPath, made: bool) {
         if made {
             let _ = self.storage.remove_dir(dir);
         }
     }
 
-    fn save_manifest(&self) -> Result<(), ProjectError> {
+    pub(crate) fn save_manifest(&self) -> Result<(), ProjectError> {
         let path = RelPath::root().join(MANIFEST_FILE);
         self.storage
             .write_atomic(&path, self.manifest.to_json().as_bytes())?;
         Ok(())
     }
 
-    fn snapshot(&self) -> Snapshot {
+    pub(crate) fn snapshot(&self) -> Snapshot {
         (self.manifest.clone(), self.index.clone())
     }
 
-    fn restore(&mut self, (manifest, index): Snapshot) {
+    pub(crate) fn restore(&mut self, (manifest, index): Snapshot) {
         self.manifest = manifest;
         self.index = index;
     }
