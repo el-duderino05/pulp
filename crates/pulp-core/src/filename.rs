@@ -110,7 +110,7 @@ pub fn slugify(title: &str) -> String {
 }
 
 fn fold(name: &str) -> String {
-    name.nfc().collect::<String>().to_lowercase()
+    name.nfc().collect::<String>().to_uppercase().to_lowercase()
 }
 
 /// Returns `slug.ext`, or `slug-2.ext`, `slug-3.ext`... when the name is
@@ -182,6 +182,14 @@ mod tests {
         let full = "a".repeat(60);
         let name = unique_name(&full, "md", &[format!("{full}.md")]);
         assert_eq!(name, format!("{}-2.md", "a".repeat(58)));
+    }
+
+    #[test]
+    fn final_and_plain_sigma_compare_equal() {
+        assert_eq!(
+            unique_name("λογος", "md", &["λογοσ.md".into()]),
+            "λογος-2.md"
+        );
     }
 
     #[test]

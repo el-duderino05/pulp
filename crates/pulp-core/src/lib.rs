@@ -2,4 +2,5 @@
 pub mod brand;
 pub mod filename;
 pub mod id;
+pub mod storage;
 pub mod text;
