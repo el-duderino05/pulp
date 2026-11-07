@@ -11,6 +11,8 @@ use std::time::{Duration, SystemTime};
 
 pub const SAVE_RETRIES: u32 = 5;
 pub const RETRY_DELAY: Duration = Duration::from_millis(200);
+/// A leftover temp file is only cleared once it is at least this old.
+pub const STALE_TEMP_AGE: Duration = Duration::from_secs(60);
 
 /// A path relative to the storage root, always `/`-separated. The empty path
 /// is the root itself.
@@ -161,6 +163,10 @@ impl StorageError {
 
 pub trait Storage {
     fn read(&self, p: &RelPath) -> Result<Vec<u8>, StorageError>;
+    /// Precondition: one writer at a time per path; the app guarantees this by
+    /// serialising calls per project. A leftover temp file is cleared only
+    /// when older than `STALE_TEMP_AGE`, so a concurrent writer's live temp
+    /// file is never mistaken for a crash leftover and deleted.
     fn write_atomic(&self, p: &RelPath, data: &[u8]) -> Result<(), StorageError>;
     fn list(&self, dir: &RelPath) -> Result<Vec<Entry>, StorageError>;
     fn create_dir_all(&self, p: &RelPath) -> Result<(), StorageError>;
@@ -264,19 +270,27 @@ impl FsStorage {
         StorageError::new(cause, p, e.to_string())
     }
 
-    /// Creates the temp file exclusively. A leftover regular file from an
-    /// earlier crash is removed once and creation retried; anything else
-    /// (a directory, a symlink) is left alone and the error returned.
+    /// Creates the temp file exclusively. A leftover regular file is removed
+    /// once and creation retried only if its modified time is readable, in
+    /// the past, and at least `STALE_TEMP_AGE` old. Anything else (a fresh or
+    /// future-dated file, a directory, a symlink) is left alone and the
+    /// original error returned.
     fn create_temp(path: &std::path::Path) -> io::Result<fs::File> {
         let create = || OpenOptions::new().write(true).create_new(true).open(path);
         match create() {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                match fs::symlink_metadata(path) {
-                    Ok(m) if m.is_file() => {
-                        fs::remove_file(path)?;
-                        create()
-                    }
-                    _ => Err(e),
+                let stale = fs::symlink_metadata(path).ok().is_some_and(|m| {
+                    m.is_file()
+                        && m.modified()
+                            .ok()
+                            .and_then(|t| SystemTime::now().duration_since(t).ok())
+                            .is_some_and(|age| age >= STALE_TEMP_AGE)
+                });
+                if stale {
+                    fs::remove_file(path)?;
+                    create()
+                } else {
+                    Err(e)
                 }
             }
             other => other,
@@ -387,14 +401,52 @@ mod tests {
     }
 
     #[test]
-    fn leftover_temp_file_is_replaced_and_save_succeeds() {
+    fn stale_leftover_temp_file_is_replaced_and_save_succeeds() {
         let (d, s) = tmp();
         let p = RelPath::new("doc.md").unwrap();
         s.write_atomic(&p, b"original").unwrap();
-        std::fs::write(d.path().join(temp_name_for("doc.md")), b"stale").unwrap();
+        let tmp_path = d.path().join(temp_name_for("doc.md"));
+        std::fs::write(&tmp_path, b"stale").unwrap();
+        set_modified(&tmp_path, SystemTime::now() - Duration::from_secs(3600));
         s.write_atomic(&p, b"new").unwrap();
         assert_eq!(s.read(&p).unwrap(), b"new");
         assert_eq!(names(&s), vec!["doc.md".to_string()]);
+    }
+
+    fn set_modified(path: &std::path::Path, when: SystemTime) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+    }
+
+    #[test]
+    fn fresh_leftover_temp_file_is_not_touched() {
+        let (d, s) = tmp();
+        let p = RelPath::new("doc.md").unwrap();
+        s.write_atomic(&p, b"original").unwrap();
+        let tmp_path = d.path().join(temp_name_for("doc.md"));
+        std::fs::write(&tmp_path, b"live").unwrap();
+        let start = std::time::Instant::now();
+        assert!(s.write_atomic(&p, b"new").is_err());
+        assert!(start.elapsed() >= Duration::from_millis(900));
+        assert_eq!(s.read(&p).unwrap(), b"original");
+        assert_eq!(std::fs::read(&tmp_path).unwrap(), b"live");
+    }
+
+    #[test]
+    fn future_dated_temp_file_is_not_touched() {
+        let (d, s) = tmp();
+        let p = RelPath::new("doc.md").unwrap();
+        s.write_atomic(&p, b"original").unwrap();
+        let tmp_path = d.path().join(temp_name_for("doc.md"));
+        std::fs::write(&tmp_path, b"live").unwrap();
+        set_modified(&tmp_path, SystemTime::now() + Duration::from_secs(3600));
+        assert!(s.write_atomic(&p, b"new").is_err());
+        assert_eq!(s.read(&p).unwrap(), b"original");
+        assert_eq!(std::fs::read(&tmp_path).unwrap(), b"live");
     }
 
     #[test]
