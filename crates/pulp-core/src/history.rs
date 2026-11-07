@@ -9,6 +9,7 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::brand::MANIFEST_FILE;
+use crate::header::parse_markdown_item;
 use crate::id::Id;
 use crate::items::{Snapshot as State, companions_of, parse_verified};
 use crate::manifest::{Manifest, ManifestError};
@@ -259,9 +260,17 @@ impl<S: Storage> Project<S> {
         snapshot: &Id,
     ) -> Result<(), ProjectError> {
         let bytes = self.read_snapshot_bytes(target, snapshot)?;
-        self.take_snapshot(target, &SnapshotReason::Timer)?;
         match target {
             HistoryTarget::Item(id) => {
+                if let Some((raw, path)) = self.raw_item_bytes(id)? {
+                    self.write_snapshot(
+                        target,
+                        &SnapshotReason::Timer,
+                        &raw,
+                        Some(&path),
+                        now_secs(),
+                    )?;
+                }
                 parse_verified(id, &bytes).map_err(|_| ProjectError::NotFound(id.clone()))?;
                 let path = self
                     .index
@@ -271,6 +280,7 @@ impl<S: Storage> Project<S> {
                 self.storage.write_atomic(&path, &bytes)?;
             }
             HistoryTarget::Manifest => {
+                self.take_snapshot(target, &SnapshotReason::Timer)?;
                 let manifest = load_manifest(&bytes)?;
                 self.storage.write_atomic(&manifest_path(), &bytes)?;
                 self.manifest = manifest;
@@ -419,6 +429,31 @@ impl<S: Storage> Project<S> {
             }
             HistoryTarget::Manifest => Ok((self.storage.read(&manifest_path())?, None)),
         }
+    }
+
+    /// The raw bytes of an item's file for a restore safety snapshot, with no
+    /// header check: a damaged file is exactly what a restore may be
+    /// recovering from. `None` if the file is missing. A file that holds a
+    /// different item is never touched (`NotFound`).
+    fn raw_item_bytes(&self, id: &Id) -> Result<Option<(Vec<u8>, RelPath)>, ProjectError> {
+        let path = self
+            .index
+            .get(id)
+            .cloned()
+            .ok_or_else(|| ProjectError::NotFound(id.clone()))?;
+        let bytes = match self.storage.read(&path) {
+            Ok(b) => b,
+            Err(e) if e.cause() == ErrorCause::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let other = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|t| parse_markdown_item(t).ok())
+            .is_some_and(|f| f.header.id != *id);
+        if other {
+            return Err(ProjectError::NotFound(id.clone()));
+        }
+        Ok(Some((bytes, path)))
     }
 
     fn take_snapshot(
@@ -1066,6 +1101,73 @@ mod tests {
         ));
         assert_eq!(read(d.path(), MANIFEST_FILE), current);
         assert_eq!(p.manifest().to_json(), in_memory);
+    }
+
+    #[test]
+    fn restore_works_when_the_current_file_has_a_broken_header() {
+        let (d, mut p, ms) = setup();
+        let id = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.save_body(&id, "good\n").unwrap();
+        let snap = p
+            .snapshot(
+                HistoryTarget::Item(id.clone()),
+                SnapshotReason::Named("x".into()),
+            )
+            .unwrap();
+        let broken: &[u8] = b"---\nid: [unclosed\n---\nbroken \xff\n";
+        write(d.path(), "manuscript/a.md", broken);
+        p.restore_snapshot(&HistoryTarget::Item(id.clone()), &snap)
+            .unwrap();
+        assert_eq!(p.read_item(&id).unwrap().body, "good\n");
+        let safety = p
+            .list_snapshots(&HistoryTarget::Item(id.clone()))
+            .unwrap()
+            .into_iter()
+            .find(|s| s.reason == SnapshotReason::Timer)
+            .expect("a Timer safety snapshot");
+        assert_eq!(
+            read(d.path(), &format!(".history/{id}/{}.snap", safety.id)),
+            broken
+        );
+    }
+
+    #[test]
+    fn restore_recreates_a_deleted_file_with_no_safety_snapshot() {
+        let (d, mut p, ms) = setup();
+        let id = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.save_body(&id, "good\n").unwrap();
+        let snap = p
+            .snapshot(
+                HistoryTarget::Item(id.clone()),
+                SnapshotReason::Named("x".into()),
+            )
+            .unwrap();
+        std::fs::remove_file(d.path().join("manuscript/a.md")).unwrap();
+        p.restore_snapshot(&HistoryTarget::Item(id.clone()), &snap)
+            .unwrap();
+        assert_eq!(p.path_of(&id).unwrap().as_str(), "manuscript/a.md");
+        assert_eq!(p.read_item(&id).unwrap().body, "good\n");
+        assert_eq!(p.list_snapshots(&HistoryTarget::Item(id)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_never_overwrites_another_items_file() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.create_document(&ms, "B", DocKind::Prose).unwrap();
+        let snap = p
+            .snapshot(HistoryTarget::Item(a.clone()), SnapshotReason::Timer)
+            .unwrap();
+        let b_bytes = read(d.path(), "manuscript/b.md");
+        write(d.path(), "manuscript/a.md", &b_bytes);
+        let r = p.restore_snapshot(&HistoryTarget::Item(a.clone()), &snap);
+        assert!(matches!(r, Err(ProjectError::NotFound(id)) if id == a));
+        assert_eq!(read(d.path(), "manuscript/a.md"), b_bytes);
+        assert_eq!(
+            p.list_snapshots(&HistoryTarget::Item(a)).unwrap().len(),
+            1,
+            "no safety snapshot of another item's file"
+        );
     }
 
     #[test]
