@@ -7,6 +7,7 @@ pub mod items;
 pub mod library;
 pub mod manifest;
 pub mod project;
+pub mod reconcile;
 pub mod schema;
 pub mod storage;
 pub mod text;

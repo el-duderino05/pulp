@@ -8,6 +8,7 @@ pub use crate::brand::MANIFEST_FILE;
 use crate::header::{HeaderError, parse_markdown_item};
 use crate::id::Id;
 use crate::manifest::{Manifest, ManifestError};
+use crate::reconcile::reconcile;
 use crate::storage::{RelPath, Storage, StorageError, is_temp_name};
 use crate::text::normalize_text;
 use crate::version::{VersionError, check_readable};
@@ -87,13 +88,14 @@ impl<S: Storage> Project<S> {
         })
     }
 
-    /// Opens a project. Only reads files, apart from recreating a missing
-    /// `.history` or `.trash` folder.
+    /// Opens a project and reconciles it with the files on disk (spec
+    /// section 4). Files change only as those rules require; the manifest is
+    /// saved only when reconciling changed it.
     pub fn open(storage: S) -> Result<(Project<S>, ReconcileReport), ProjectError> {
         let bytes = storage.read(&RelPath::root().join(MANIFEST_FILE))?;
         let text = String::from_utf8(bytes)
             .map_err(|_| ManifestError::Json("the manifest is not valid UTF-8".to_string()))?;
-        let manifest = match Manifest::load(&text) {
+        let mut manifest = match Manifest::load(&text) {
             Ok(m) => m,
             Err(ManifestError::Version(v)) => return Err(ProjectError::Version(v)),
             Err(e) => return Err(ProjectError::Manifest(e)),
@@ -108,10 +110,19 @@ impl<S: Storage> Project<S> {
             }
         }
 
-        let mut index = HashMap::new();
-        for item in scan(&storage)? {
-            index.entry(item.id).or_insert(item.path);
+        let before = manifest.clone();
+        let (index, found) = reconcile(&storage, &mut manifest, scan(&storage)?)?;
+        if manifest != before {
+            storage.write_atomic(
+                &RelPath::root().join(MANIFEST_FILE),
+                manifest.to_json().as_bytes(),
+            )?;
         }
+        report.found = found.found;
+        report.missing = found.missing;
+        report.duplicates_trashed = found.duplicates_trashed;
+        report.copies_reassigned = found.copies_reassigned;
+        report.conflicts = found.conflicts;
         Ok((
             Project {
                 storage,
@@ -290,13 +301,21 @@ mod tests {
     #[test]
     fn open_changes_no_file_bytes() {
         let d = tempfile::tempdir().unwrap();
-        Project::create(FsStorage::new(d.path()), "X").unwrap();
+        let mut created = Project::create(FsStorage::new(d.path()), "X").unwrap();
         put(
             d.path(),
             "notes/README.md",
             b"Just a readme\r\nline two\r\n",
         );
-        let id = put_item(d.path(), "manuscript/a.md", "A");
+        let ms = created
+            .manifest()
+            .folder_by_path("manuscript")
+            .unwrap()
+            .id
+            .clone();
+        let id = created
+            .create_document(&ms, "A", crate::header::DocKind::Prose)
+            .unwrap();
         let before = snapshot(d.path());
         let (p, _) = Project::open(FsStorage::new(d.path())).unwrap();
         assert_eq!(p.path_of(&id).unwrap().as_str(), "manuscript/a.md");
@@ -325,14 +344,30 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_ids_resolve_to_the_first_path_in_sorted_order() {
+    fn duplicate_ids_keep_the_oldest_file() {
         let d = tempfile::tempdir().unwrap();
         Project::create(FsStorage::new(d.path()), "X").unwrap();
         let (id, text) = item_text("A");
         put(d.path(), "notes/b.md", text.as_bytes());
         put(d.path(), "manuscript/z.md", text.as_bytes());
-        let (p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        for (rel, secs) in [
+            ("manuscript/z.md", 1_700_000_000),
+            ("notes/b.md", 1_700_000_100),
+        ] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(d.path().join(rel))
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+        }
+        let (p, report) = Project::open(FsStorage::new(d.path())).unwrap();
         assert_eq!(p.path_of(&id).unwrap().as_str(), "manuscript/z.md");
+        assert!(!d.path().join("notes/b.md").exists());
+        assert_eq!(report.duplicates_trashed.len(), 1);
+        let entries = p.list_trash().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].item_id, id);
     }
 
     #[test]
