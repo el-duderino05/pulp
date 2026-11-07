@@ -5,6 +5,7 @@ pub mod header;
 pub mod id;
 pub mod library;
 pub mod manifest;
+pub mod project;
 pub mod schema;
 pub mod storage;
 pub mod text;

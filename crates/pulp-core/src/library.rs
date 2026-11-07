@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::brand::MANIFEST_FILE;
+use crate::filename::{slugify, unique_name};
 use crate::id::Id;
 use crate::manifest::Manifest;
+use crate::project::{Project, ProjectError};
 use crate::schema::{SchemaKind, validate};
 use crate::storage::{FsStorage, RelPath, Storage, StorageError, is_temp_name};
 use crate::text::normalize_text;
@@ -151,6 +153,30 @@ impl Library {
             },
             recreated,
         ))
+    }
+
+    /// Makes a new project in `Projects/<unique slug of name>` and returns
+    /// its absolute folder.
+    pub fn create_project(&self, name: &str) -> Result<PathBuf, LibraryError> {
+        let storage = FsStorage::new(&self.root);
+        let projects = rel(LIBRARY_DIRS[0]);
+        let existing: Vec<String> = storage
+            .list(&projects)?
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        let folder = unique_name(&slugify(name), "", &existing);
+        let project_rel = projects.join(&folder);
+        storage.create_dir_all(&project_rel)?;
+        let abs = self.root.join(LIBRARY_DIRS[0]).join(&folder);
+        match Project::create(FsStorage::new(&abs), name) {
+            Ok(_) => Ok(abs),
+            Err(ProjectError::Storage(e)) => Err(LibraryError::Storage(e)),
+            Err(ProjectError::Version(e)) => Err(LibraryError::Version(e)),
+            Err(e) => Err(LibraryError::Invalid(format!(
+                "could not create the project: {e}"
+            ))),
+        }
     }
 
     /// Every project folder under `Projects/`, sorted by folder name. A
