@@ -280,7 +280,8 @@ impl<S: Storage> Project<S> {
                 self.storage.write_atomic(&path, &bytes)?;
             }
             HistoryTarget::Manifest => {
-                self.take_snapshot(target, &SnapshotReason::Timer)?;
+                let current = self.manifest_bytes_or_memory()?;
+                self.write_snapshot(target, &SnapshotReason::Timer, &current, None, now_secs())?;
                 let manifest = load_manifest(&bytes)?;
                 self.storage.write_atomic(&manifest_path(), &bytes)?;
                 self.manifest = manifest;
@@ -454,6 +455,16 @@ impl<S: Storage> Project<S> {
             return Err(ProjectError::NotFound(id.clone()));
         }
         Ok(Some((bytes, path)))
+    }
+
+    /// The manifest file's bytes for a safety snapshot. If the file is
+    /// missing, the manifest in memory stands in for it.
+    fn manifest_bytes_or_memory(&self) -> Result<Vec<u8>, ProjectError> {
+        match self.storage.read(&manifest_path()) {
+            Ok(b) => Ok(b),
+            Err(e) if e.cause() == ErrorCause::NotFound => Ok(self.manifest.to_json().into_bytes()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn take_snapshot(
@@ -633,7 +644,10 @@ impl<S: Storage> Project<S> {
                 ProjectError::History(format!("group {group} names an unknown target {name:?}"))
             })?;
             let snap_bytes = self.read_snapshot_bytes(&target, snap)?;
-            let (current_bytes, current_path) = self.current_bytes(&target)?;
+            let (current_bytes, current_path) = match target {
+                HistoryTarget::Manifest => (self.manifest_bytes_or_memory()?, None),
+                HistoryTarget::Item(_) => self.current_bytes(&target)?,
+            };
             match &target {
                 HistoryTarget::Manifest => {
                     let loaded = load_manifest(&snap_bytes)?;
@@ -684,7 +698,9 @@ impl<S: Storage> Project<S> {
             self.storage.write_atomic(&s.current_path, &s.snap_bytes)?;
             applied.written = i + 1;
         }
-        for s in steps.iter().filter(|s| s.current_path != s.recorded) {
+        for s in steps.iter().filter(|s| {
+            normalize_text(s.current_path.as_str()) != normalize_text(s.recorded.as_str())
+        }) {
             let dir = s.recorded.parent().unwrap_or_else(RelPath::root);
             if !self.storage.exists(&dir) {
                 self.storage.create_dir_all(&dir)?;
@@ -1167,6 +1183,84 @@ mod tests {
             p.list_snapshots(&HistoryTarget::Item(a)).unwrap().len(),
             1,
             "no safety snapshot of another item's file"
+        );
+    }
+
+    #[test]
+    fn undo_does_not_move_an_item_whose_name_differs_only_in_normalisation() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "Cafe", DocKind::Prose).unwrap();
+        p.save_body(&a, "one\n").unwrap();
+        drop(p);
+        std::fs::rename(
+            d.path().join("manuscript/cafe.md"),
+            d.path().join("manuscript/cafe\u{0301}.md"),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let before = p.path_of(&a).cloned().unwrap();
+        let group = p.begin_operation("edit", std::slice::from_ref(&a)).unwrap();
+        p.save_body(&a, "two\n").unwrap();
+        p.undo_operation(&group).unwrap();
+        assert_eq!(p.read_item(&a).unwrap().body, "one\n");
+        assert_eq!(p.path_of(&a).cloned().unwrap(), before, "not moved");
+        let names: Vec<String> = std::fs::read_dir(d.path().join("manuscript"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.ends_with("-2.md")),
+            "no suffixed copy: {names:?}"
+        );
+        assert_eq!(names.len(), 1, "{names:?}");
+    }
+
+    #[test]
+    fn restoring_the_manifest_works_when_its_file_is_missing() {
+        let (d, mut p, ms) = setup();
+        let snap = p
+            .snapshot(HistoryTarget::Manifest, SnapshotReason::Named("x".into()))
+            .unwrap();
+        let before = p.manifest().to_json();
+        p.create_folder(Some(&ms), "Part").unwrap();
+        let in_memory = p.manifest().to_json();
+        std::fs::remove_file(d.path().join(MANIFEST_FILE)).unwrap();
+        p.restore_snapshot(&HistoryTarget::Manifest, &snap).unwrap();
+        assert_eq!(read_str(d.path(), MANIFEST_FILE), before);
+        assert_eq!(p.manifest().to_json(), before);
+        let safety = p
+            .list_snapshots(&HistoryTarget::Manifest)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.reason == SnapshotReason::Timer)
+            .expect("a Timer safety snapshot");
+        assert_eq!(
+            read_str(d.path(), &format!(".history/manifest/{}.snap", safety.id)),
+            in_memory
+        );
+    }
+
+    #[test]
+    fn undo_works_when_the_manifest_file_is_missing() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        let before = p.manifest().to_json();
+        let group = p.begin_operation("op", std::slice::from_ref(&a)).unwrap();
+        p.create_folder(Some(&ms), "Part").unwrap();
+        let in_memory = p.manifest().to_json();
+        std::fs::remove_file(d.path().join(MANIFEST_FILE)).unwrap();
+        p.undo_operation(&group).unwrap();
+        assert_eq!(read_str(d.path(), MANIFEST_FILE), before);
+        assert_eq!(p.manifest().to_json(), before);
+        let safety = p
+            .list_snapshots(&HistoryTarget::Manifest)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.reason == SnapshotReason::Timer)
+            .expect("a Timer safety snapshot");
+        assert_eq!(
+            read_str(d.path(), &format!(".history/manifest/{}.snap", safety.id)),
+            in_memory
         );
     }
 
