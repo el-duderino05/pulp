@@ -266,7 +266,7 @@ impl<S: Storage> Project<S> {
             return Err(ProjectError::NotFound(id.clone()));
         }
         let dest = self.disk_dir(to_folder)?;
-        let (cur, item) = self.read_verified(id)?;
+        let (cur, _) = self.read_verified(id)?;
         let cur_dir = cur.parent().unwrap_or_else(RelPath::root);
 
         let mut new_path = cur.clone();
@@ -284,8 +284,11 @@ impl<S: Storage> Project<S> {
                     return Err(e);
                 }
             };
-            let slug = slugify(&item.header.title);
-            let name = self.pick_name(&dest, &slug, "md", entries, None, true);
+            // A move never renames the file: keep its current stem and only
+            // add a suffix if that clashes in the destination.
+            let file = cur.file_name();
+            let (stem, ext) = file.rsplit_once('.').unwrap_or((file, ""));
+            let name = self.pick_name(&dest, stem, ext, entries, None, true);
             new_path = dest.join(&name);
             moves = self.plan_moves(&cur, &new_path);
             if let Err(e) = self.move_files(&moves) {
@@ -754,6 +757,57 @@ mod tests {
         assert_eq!(
             p.path_of(&other).unwrap().as_str(),
             "manuscript/part/arrival.md"
+        );
+    }
+
+    /// A project holding a document titled "Arrival" whose file was named
+    /// `chapter-01-arrival.md` by hand, plus an empty folder `part`.
+    fn hand_named() -> (tempfile::TempDir, Project<FsStorage>, Id, Id) {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let id = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
+        drop(p);
+        std::fs::rename(
+            d.path().join("manuscript/arrival.md"),
+            d.path().join("manuscript/chapter-01-arrival.md"),
+        )
+        .unwrap();
+        let (p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        (d, p, id, part)
+    }
+
+    #[test]
+    fn move_item_keeps_the_current_file_name() {
+        let (d, mut p, id, part) = hand_named();
+        p.move_item(&id, Some(&part), 0).unwrap();
+        assert_eq!(
+            p.path_of(&id).unwrap().as_str(),
+            "manuscript/part/chapter-01-arrival.md"
+        );
+        assert!(
+            d.path()
+                .join("manuscript/part/chapter-01-arrival.md")
+                .is_file()
+        );
+        assert!(!d.path().join("manuscript/chapter-01-arrival.md").exists());
+    }
+
+    #[test]
+    fn move_item_suffixes_the_current_name_on_a_clash() {
+        let (d, mut p, id, part) = hand_named();
+        std::fs::write(
+            d.path().join("manuscript/part/chapter-01-arrival.md"),
+            "theirs",
+        )
+        .unwrap();
+        p.move_item(&id, Some(&part), 0).unwrap();
+        assert_eq!(
+            p.path_of(&id).unwrap().as_str(),
+            "manuscript/part/chapter-01-arrival-2.md"
+        );
+        assert_eq!(
+            read(d.path(), "manuscript/part/chapter-01-arrival.md"),
+            b"theirs"
         );
     }
 
