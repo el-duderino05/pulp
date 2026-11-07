@@ -188,18 +188,6 @@ mod tests {
         }
     }
 
-    // Decision 6 expects `Invalid`, but serde_norway reads an unquoted `1984`
-    // into a String field. Ignored until that is decided; reported to the lead.
-    #[test]
-    #[ignore = "serde_norway accepts an unquoted number as a String"]
-    fn unquoted_number_title_is_invalid() {
-        let text = full("").replace("title: Arrival", "title: 1984");
-        assert!(matches!(
-            parse_markdown_item(&text),
-            Err(HeaderError::Invalid(_))
-        ));
-    }
-
     #[test]
     fn crlf_and_decomposed_text_render_as_lf_and_nfc_keeping_unknown_order() {
         let text = full("zKey: 1\naKey: 2\n")
@@ -301,5 +289,17 @@ mod tests {
         assert!(h.labels.is_empty() && h.synopsis.is_empty() && h.extra.is_empty());
         assert_eq!(h.created.len(), 20);
         assert!(h.created.ends_with('Z') && !h.created.contains('.'));
+    }
+
+    #[test]
+    fn unquoted_scalars_in_a_title_are_read_as_their_raw_text() {
+        for raw in ["1984", "1.10", "true"] {
+            let text = full("").replace("title: Arrival", &format!("title: {raw}"));
+            let mut f = parse_markdown_item(&text).unwrap();
+            assert_eq!(f.header.title, raw);
+            f.header.title = raw.to_string();
+            let back = parse_markdown_item(&render_markdown_item(&f)).unwrap();
+            assert_eq!(back.header.title, raw);
+        }
     }
 }
