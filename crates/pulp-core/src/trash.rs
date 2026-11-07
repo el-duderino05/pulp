@@ -209,6 +209,12 @@ fn is_under(path: &str, folder: &str) -> bool {
             .is_some_and(|r| r.starts_with('/'))
 }
 
+/// The stored index counts only in the folder it came from (or the top
+/// level); when that folder is gone the node goes last at the top level.
+fn at_index(e: &TrashEntry, parent: Option<&Id>) -> Option<usize> {
+    (parent.is_some() || e.original_folder.is_none()).then_some(e.index)
+}
+
 impl<S: Storage> Project<S> {
     /// Moves the document and its existing companions into the trash and
     /// takes it out of the tree. Returns the entry id.
@@ -379,7 +385,11 @@ impl<S: Storage> Project<S> {
         let snap = self.snapshot();
         let saved = self
             .manifest
-            .insert_item(parent.as_ref(), e.item_id.clone(), Some(e.index))
+            .insert_item(
+                parent.as_ref(),
+                e.item_id.clone(),
+                at_index(e, parent.as_ref()),
+            )
             .map_err(ProjectError::from)
             .and_then(|()| {
                 self.index.insert(e.item_id.clone(), new_path.clone());
@@ -407,7 +417,7 @@ impl<S: Storage> Project<S> {
         self.manifest.clone().insert_node(
             parent.as_ref(),
             Node::Folder(node.clone()),
-            Some(e.index),
+            at_index(e, parent.as_ref()),
         )?;
 
         let stored = dir.join(&e.files[0]);
@@ -445,7 +455,7 @@ impl<S: Storage> Project<S> {
         let snap = self.snapshot();
         let saved = self
             .manifest
-            .insert_node(parent.as_ref(), wrapped, Some(e.index))
+            .insert_node(parent.as_ref(), wrapped, at_index(e, parent.as_ref()))
             .map_err(ProjectError::from)
             .and_then(|()| {
                 for item in scan(&self.storage)? {
@@ -916,5 +926,47 @@ mod tests {
         assert_eq!(p.manifest(), &before);
         assert!(p.path_of(&b).is_none());
         assert_eq!(p.list_trash().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_item_whose_folder_is_gone_is_appended_as_the_last_top_level_node() {
+        let (_d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let a = p.create_document(&part, "A", DocKind::Prose).unwrap();
+        let entry = p.trash_item(&a).unwrap();
+        p.trash_folder(&part).unwrap();
+        p.restore_from_trash(&entry).unwrap();
+        let last = p.manifest().tree.len() - 1;
+        assert_eq!(p.manifest().parent_of(&a), Some((None, last)));
+        assert!(last > 0 && p.manifest().tree[0].id() == &ms);
+    }
+
+    #[test]
+    fn a_folder_whose_parent_is_gone_is_appended_as_the_last_top_level_node() {
+        let (d, mut p, ms, part, inner, a, b) = nested();
+        let entry = p.trash_folder(&part).unwrap();
+        p.create_folder(None, "Other").unwrap();
+        p.trash_folder(&ms).unwrap();
+        p.restore_from_trash(&entry).unwrap();
+        let last = p.manifest().tree.len() - 1;
+        assert_eq!(p.manifest().parent_of(&part), Some((None, last)));
+        assert!(last > 0);
+        assert_eq!(p.manifest().folder(&part).unwrap().path, "part");
+        assert_eq!(p.manifest().folder(&inner).unwrap().path, "part/inner");
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "part/a.md");
+        assert_eq!(p.path_of(&b).unwrap().as_str(), "part/inner/b.md");
+        assert!(d.path().join("part/notes.txt").is_file());
+    }
+
+    #[test]
+    fn a_top_level_item_keeps_its_stored_index() {
+        let (_d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.move_item(&a, None, 0).unwrap();
+        assert_eq!(p.manifest().parent_of(&a), Some((None, 0)));
+        let entry = p.trash_item(&a).unwrap();
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(p.manifest().parent_of(&a), Some((None, 0)));
+        assert_eq!(p.manifest().tree[1].id(), &ms);
     }
 }
