@@ -3,6 +3,8 @@ pub mod brand;
 pub mod filename;
 pub mod header;
 pub mod id;
+pub mod manifest;
+pub mod schema;
 pub mod storage;
 pub mod text;
 pub mod version;

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Library settings",
+  "type": "object",
+  "required": ["format", "minReader", "author", "settings"],
+  "properties": {
+    "format": { "type": "integer", "minimum": 1 },
+    "minReader": { "type": "integer", "minimum": 1 },
+    "author": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$" },
+        "name": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "settings": { "type": "object" }
+  },
+  "additionalProperties": true
+}
