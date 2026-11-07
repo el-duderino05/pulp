@@ -172,6 +172,9 @@ pub trait Storage {
     fn create_dir_all(&self, p: &RelPath) -> Result<(), StorageError>;
     fn rename(&self, from: &RelPath, to: &RelPath) -> Result<(), StorageError>;
     fn remove_file(&self, p: &RelPath) -> Result<(), StorageError>;
+    /// Removes a folder only if it is empty; a folder with anything in it is
+    /// left alone and an error is returned.
+    fn remove_dir(&self, p: &RelPath) -> Result<(), StorageError>;
     fn exists(&self, p: &RelPath) -> bool;
 }
 
@@ -369,6 +372,10 @@ impl Storage for FsStorage {
 
     fn remove_file(&self, p: &RelPath) -> Result<(), StorageError> {
         fs::remove_file(self.resolve(p)?).map_err(|e| Self::map_io(p, &e))
+    }
+
+    fn remove_dir(&self, p: &RelPath) -> Result<(), StorageError> {
+        fs::remove_dir(self.resolve(p)?).map_err(|e| Self::map_io(p, &e))
     }
 
     fn exists(&self, p: &RelPath) -> bool {

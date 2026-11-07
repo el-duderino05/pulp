@@ -38,6 +38,8 @@ pub enum ProjectError {
     NotAFolder(Id),
     #[error("this folder is already a project")]
     AlreadyAProject,
+    #[error("{0} already exists, so nothing was changed")]
+    Exists(RelPath),
 }
 
 #[derive(Debug, Default)]
@@ -58,9 +60,9 @@ pub struct ScannedItem {
 }
 
 pub struct Project<S: Storage> {
-    storage: S,
-    manifest: Manifest,
-    index: HashMap<Id, RelPath>,
+    pub(crate) storage: S,
+    pub(crate) manifest: Manifest,
+    pub(crate) index: HashMap<Id, RelPath>,
 }
 
 impl<S: Storage> Project<S> {

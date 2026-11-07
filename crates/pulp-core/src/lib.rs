@@ -3,6 +3,7 @@ pub mod brand;
 pub mod filename;
 pub mod header;
 pub mod id;
+pub mod items;
 pub mod library;
 pub mod manifest;
 pub mod project;
