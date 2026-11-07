@@ -15,6 +15,17 @@ fn write_item_with(root: &Path, rel: &str, header: ItemHeader, body: &str) {
     .unwrap();
 }
 
+/// Sets the file's modified time one hour in the past, so it is clearly the
+/// older of two files whatever the file system's time resolution.
+fn make_older(root: &Path, rel: &str) {
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(root.join(rel))
+        .unwrap();
+    f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+}
+
 fn new_project() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     Project::create(FsStorage::new(d.path()), "X").unwrap();
@@ -59,8 +70,8 @@ fn identical_duplicates_send_the_newer_file_to_trash() {
     let d = new_project();
     let h = ItemHeader::new_document("A", DocKind::Prose);
     write_item_with(d.path(), "manuscript/a.md", h.clone(), "same\n");
-    std::thread::sleep(std::time::Duration::from_millis(20));
     write_item_with(d.path(), "manuscript/a-copy.md", h, "same\n");
+    make_older(d.path(), "manuscript/a.md");
     let (_p, report) = Project::open(FsStorage::new(d.path())).unwrap();
     assert_eq!(report.duplicates_trashed.len(), 1);
     assert_eq!(
@@ -97,8 +108,8 @@ fn different_duplicates_give_the_newer_file_a_fresh_id() {
     let h = ItemHeader::new_document("A", DocKind::Prose);
     let id = h.id.clone();
     write_item_with(d.path(), "manuscript/a.md", h.clone(), "original\n");
-    std::thread::sleep(std::time::Duration::from_millis(20));
     write_item_with(d.path(), "manuscript/a-2.md", h, "edited copy\n");
+    make_older(d.path(), "manuscript/a.md");
     let (p, report) = Project::open(FsStorage::new(d.path())).unwrap();
     assert_eq!(report.copies_reassigned.len(), 1);
     let (path, new_id) = &report.copies_reassigned[0];
