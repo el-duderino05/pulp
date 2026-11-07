@@ -58,6 +58,19 @@ pub(crate) fn repath_folders(nodes: &mut [Node], old: &str, new: &str) {
     }
 }
 
+/// Parses item file bytes and checks that they hold `id` and can be read by
+/// this version.
+pub(crate) fn parse_verified(id: &Id, bytes: &[u8]) -> Result<ItemFile, ProjectError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| HeaderError::Invalid("the file is not valid UTF-8".to_string()))?;
+    let item = parse_markdown_item(text)?;
+    if item.header.id != *id {
+        return Err(ProjectError::NotFound(id.clone()));
+    }
+    check_readable(item.header.min_reader)?;
+    Ok(item)
+}
+
 impl<S: Storage> Project<S> {
     /// Reads the item and checks that the indexed file still holds it.
     pub fn read_item(&self, id: &Id) -> Result<ItemFile, ProjectError> {
@@ -101,7 +114,7 @@ impl<S: Storage> Project<S> {
             self.drop_dir(&dir, made_dir);
             return Err(e.into());
         }
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         let saved = self
             .manifest
             .insert_item(Some(folder), id.clone(), None)
@@ -140,7 +153,7 @@ impl<S: Storage> Project<S> {
             children: Vec::new(),
             extra: serde_json::Map::new(),
         });
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         let siblings = match parent {
             None => Some(&mut self.manifest.tree),
             Some(pid) => self.manifest.folder_mut(pid).map(|f| &mut f.children),
@@ -231,7 +244,7 @@ impl<S: Storage> Project<S> {
         };
         self.move_files(&moves)?;
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         if let Some(f) = self.manifest.folder_mut(id) {
             f.title = title;
         }
@@ -297,7 +310,7 @@ impl<S: Storage> Project<S> {
             }
         }
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         self.manifest.remove_node(id);
         let saved = self
             .manifest
@@ -325,13 +338,7 @@ impl<S: Storage> Project<S> {
             .cloned()
             .ok_or_else(|| ProjectError::NotFound(id.clone()))?;
         let bytes = self.storage.read(&path)?;
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| HeaderError::Invalid("the file is not valid UTF-8".to_string()))?;
-        let item = parse_markdown_item(text)?;
-        if item.header.id != *id {
-            return Err(ProjectError::NotFound(id.clone()));
-        }
-        check_readable(item.header.min_reader)?;
+        let item = parse_verified(id, &bytes)?;
         Ok((path, item))
     }
 
@@ -439,7 +446,7 @@ impl<S: Storage> Project<S> {
         Ok(())
     }
 
-    pub(crate) fn snapshot(&self) -> Snapshot {
+    pub(crate) fn capture_state(&self) -> Snapshot {
         (self.manifest.clone(), self.index.clone())
     }
 

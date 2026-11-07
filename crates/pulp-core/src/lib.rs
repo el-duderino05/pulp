@@ -2,6 +2,7 @@
 pub mod brand;
 pub mod filename;
 pub mod header;
+pub mod history;
 pub mod id;
 pub mod items;
 pub mod library;

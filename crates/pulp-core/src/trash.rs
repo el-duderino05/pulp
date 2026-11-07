@@ -246,7 +246,7 @@ impl<S: Storage> Project<S> {
         };
         let entry_id = store_in_trash(&self.storage, &files, entry)?;
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         self.manifest.remove_node(id);
         self.index.remove(id);
         if let Err(e) = self.save_manifest() {
@@ -287,7 +287,7 @@ impl<S: Storage> Project<S> {
         };
         let entry_id = store_in_trash(&self.storage, &files, entry)?;
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         self.manifest.remove_node(id);
         self.index.retain(|_, p| !is_under(p.as_str(), &node.path));
         if let Err(e) = self.save_manifest() {
@@ -382,7 +382,7 @@ impl<S: Storage> Project<S> {
             return Err(err);
         }
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         let saved = self
             .manifest
             .insert_item(
@@ -452,7 +452,7 @@ impl<S: Storage> Project<S> {
         item_ids_in(&wrapped, &mut ids);
         let wanted: HashSet<Id> = ids.into_iter().collect();
 
-        let snap = self.snapshot();
+        let snap = self.capture_state();
         let saved = self
             .manifest
             .insert_node(parent.as_ref(), wrapped, at_index(e, parent.as_ref()))

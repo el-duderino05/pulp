@@ -41,6 +41,8 @@ pub enum ProjectError {
     AlreadyAProject,
     #[error("{0} already exists, so nothing was changed")]
     Exists(RelPath),
+    #[error("history problem: {0}")]
+    History(String),
 }
 
 #[derive(Debug, Default)]
