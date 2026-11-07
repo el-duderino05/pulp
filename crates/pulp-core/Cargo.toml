@@ -1,0 +1,18 @@
+[package]
+name = "pulp-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
+jsonschema = "0.60.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_norway = "0.9.42"
+thiserror = "2.0.21"
+ulid = "3.0.0"
+unicode-normalization = "0.1.26"
+
+[dev-dependencies]
+tempfile = "3.27.0"
