@@ -9,7 +9,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::id::Id;
-use crate::items::{companions_of, repath_folders};
+use crate::items::{companions_of, path_rest, repath_folders};
 use crate::manifest::{FolderNode, Node};
 use crate::project::{Project, ProjectError, scan};
 use crate::storage::{ErrorCause, RelPath, Storage};
@@ -202,12 +202,10 @@ fn item_ids_in(node: &Node, out: &mut Vec<Id>) {
     }
 }
 
-/// True when `path` is `folder` or lies under it, by whole segments.
+/// True when `path` is `folder` or lies under it, by whole segments,
+/// compared in NFC (R65).
 fn is_under(path: &str, folder: &str) -> bool {
-    path == folder
-        || path
-            .strip_prefix(folder)
-            .is_some_and(|r| r.starts_with('/'))
+    path_rest(path, folder).is_some()
 }
 
 /// The stored index counts only in the folder it came from (or the top
@@ -269,7 +267,9 @@ impl<S: Storage> Project<S> {
             }
             None => return Err(ProjectError::NotFound(id.clone())),
         };
-        let path = RelPath::new(&node.path)?;
+        // The folder as spelled on disk, which may differ from the manifest
+        // only in normalisation.
+        let path = self.on_disk(&RelPath::new(&node.path)?);
         let (folder, index) = self
             .manifest
             .parent_of(id)
@@ -998,6 +998,35 @@ mod tests {
         {
             assert_eq!(read(d.path(), c.as_str()), bytes);
         }
+        assert!(!d.path().join(format!(".trash/{entry}")).exists());
+    }
+
+    #[test]
+    fn trash_folder_of_an_nfd_named_disk_folder_carries_its_items() {
+        use unicode_normalization::UnicodeNormalization;
+        let (d, mut p, ms) = setup();
+        let f = p
+            .create_folder(Some(&ms), "\u{39b}\u{3cc}\u{3b3}\u{3bf}\u{3c2}")
+            .unwrap();
+        let a = p.create_document(&f, "A", DocKind::Prose).unwrap();
+        let nfc = p.manifest().folder(&f).unwrap().path.clone();
+        drop(p);
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc, nfd);
+        std::fs::rename(d.path().join(&nfc), d.path().join(&nfd)).unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let listed = names_in(d.path(), "manuscript");
+
+        let entry = p.trash_folder(&f).unwrap();
+        assert!(names_in(d.path(), "manuscript").is_empty());
+        assert!(p.path_of(&a).is_none());
+        assert!(p.manifest().folder(&f).is_none());
+
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(names_in(d.path(), "manuscript"), listed);
+        assert!(p.read_item(&a).is_ok());
+        let path = p.path_of(&a).unwrap();
+        assert!(d.path().join(path.as_str()).is_file());
         assert!(!d.path().join(format!(".trash/{entry}")).exists());
     }
 

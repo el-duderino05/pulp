@@ -9,7 +9,7 @@ use serde_json::Map;
 
 use crate::header::{HeaderError, parse_markdown_item, render_markdown_item};
 use crate::id::Id;
-use crate::items::companions_of;
+use crate::items::{companions_of, same_path};
 use crate::manifest::{FolderNode, Manifest, Node};
 use crate::project::{ProjectError, ReconcileReport, ScannedItem};
 use crate::storage::{RelPath, Storage};
@@ -194,6 +194,15 @@ fn resolve_newer<S: Storage>(
     Ok(())
 }
 
+/// The id of the folder whose path is `path`, compared in NFC (R65).
+fn folder_by_same_path(nodes: &[Node], path: &str) -> Option<Id> {
+    nodes.iter().find_map(|n| match n {
+        Node::Folder(f) if same_path(&f.path, path) => Some(f.id.clone()),
+        Node::Folder(f) => folder_by_same_path(&f.children, path),
+        Node::Item { .. } => None,
+    })
+}
+
 /// The folder node for a directory, creating a node for each missing level
 /// under the nearest existing ancestor (the top level if there is none).
 fn folder_for(manifest: &mut Manifest, dir: &str) -> Result<Option<Id>, ProjectError> {
@@ -204,7 +213,7 @@ fn folder_for(manifest: &mut Manifest, dir: &str) -> Result<Option<Id>, ProjectE
             prefix.push('/');
         }
         prefix.push_str(segment);
-        let existing = manifest.folder_by_path(&prefix).map(|f| f.id.clone());
+        let existing = folder_by_same_path(&manifest.tree, &prefix);
         let id = match existing {
             Some(id) => id,
             None => {
@@ -625,6 +634,42 @@ mod tests {
         let (p, report) = open(&d);
         assert_eq!(report.missing, vec![z.clone(), x.clone(), y.clone()]);
         assert_eq!(p.manifest().item_ids(), vec![z, x, y]);
+    }
+
+    #[test]
+    fn a_found_item_in_an_nfd_named_directory_joins_the_existing_folder() {
+        use unicode_normalization::UnicodeNormalization;
+        let d = new_project();
+        let f = {
+            let (mut p, _) = open(&d);
+            let ms = p
+                .manifest()
+                .folder_by_path("manuscript")
+                .unwrap()
+                .id
+                .clone();
+            p.create_folder(Some(&ms), "\u{39b}\u{3cc}\u{3b3}\u{3bf}\u{3c2}")
+                .unwrap()
+        };
+        let nfc = {
+            let (p, _) = open(&d);
+            p.manifest().folder(&f).unwrap().path.clone()
+        };
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc, nfd);
+        std::fs::remove_dir(d.path().join(&nfc)).unwrap();
+        let h = header("X");
+        put_item(d.path(), &format!("{nfd}/x.md"), &h, "x\n");
+        let (p, report) = open(&d);
+        assert_eq!(report.found, vec![h.id.clone()]);
+        assert_eq!(p.manifest().parent_of(&h.id).unwrap().0, Some(f.clone()));
+        let ms = p.manifest().folder_by_path("manuscript").unwrap();
+        let folders = ms
+            .children
+            .iter()
+            .filter(|n| matches!(n, Node::Folder(_)))
+            .count();
+        assert_eq!(folders, 1, "no twin folder node");
     }
 
     #[test]

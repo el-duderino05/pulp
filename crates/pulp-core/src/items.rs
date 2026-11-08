@@ -38,13 +38,41 @@ fn fold(name: &str) -> String {
     name.nfc().collect::<String>().to_uppercase().to_lowercase()
 }
 
+/// True when two paths name the same place once both are in NFC (R65).
+/// Names on disk keep their own form; only comparisons normalise.
+pub(crate) fn same_path(a: &str, b: &str) -> bool {
+    a == b || normalize_text(a) == normalize_text(b)
+}
+
+/// What follows `prefix` in `p` when `p` starts with it by whole segments,
+/// compared with `same_path` (`""` when `p` is `prefix`). The rest is
+/// returned exactly as it is in `p`.
+pub(crate) fn path_rest<'a>(p: &'a str, prefix: &str) -> Option<&'a str> {
+    let n = prefix.split('/').count();
+    let mut slashes = 0;
+    let mut cut = p.len();
+    for (i, b) in p.bytes().enumerate() {
+        if b == b'/' {
+            slashes += 1;
+            if slashes == n {
+                cut = i;
+                break;
+            }
+        }
+    }
+    if slashes + 1 < n {
+        return None;
+    }
+    let rest = if cut < p.len() { &p[cut + 1..] } else { "" };
+    same_path(&p[..cut], prefix).then_some(rest)
+}
+
 /// `p` with the whole-segment prefix `old` swapped for `new`, if it has it.
 pub(crate) fn reprefix(p: &str, old: &str, new: &str) -> Option<String> {
-    if p == old {
-        return Some(new.to_string());
+    match path_rest(p, old)? {
+        "" => Some(new.to_string()),
+        rest => Some(format!("{new}/{rest}")),
     }
-    let rest = p.strip_prefix(old)?.strip_prefix('/')?;
-    Some(format!("{new}/{rest}"))
 }
 
 pub(crate) fn repath_folders(nodes: &mut [Node], old: &str, new: &str) {
@@ -224,7 +252,7 @@ impl<S: Storage> Project<S> {
             }
             None => return Err(ProjectError::NotFound(id.clone())),
         };
-        let old = RelPath::new(&old_str)?;
+        let old = self.on_disk(&RelPath::new(&old_str)?);
         let parent = old.parent().unwrap_or_else(RelPath::root);
         let own = old.file_name().to_string();
         let title = normalize_text(title);
@@ -285,7 +313,7 @@ impl<S: Storage> Project<S> {
         let mut new_path = cur.clone();
         let mut moves: Moves = Vec::new();
         let mut made_dir = false;
-        if dest != cur_dir {
+        if !same_path(dest.as_str(), cur_dir.as_str()) {
             made_dir = !self.storage.exists(&dest);
             if made_dir {
                 self.storage.create_dir_all(&dest)?;
@@ -354,6 +382,28 @@ impl<S: Storage> Project<S> {
             }
             None => Err(ProjectError::NotFound(id.clone())),
         }
+    }
+
+    /// `path` as it is spelled on disk: each segment that does not exist as
+    /// given is replaced by a sibling whose name is the same in NFC, if
+    /// there is one. Segments with no match are kept as given.
+    pub(crate) fn on_disk(&self, path: &RelPath) -> RelPath {
+        let mut out = RelPath::root();
+        for seg in path.as_str().split('/').filter(|s| !s.is_empty()) {
+            let direct = out.join(seg);
+            if self.storage.exists(&direct) {
+                out = direct;
+                continue;
+            }
+            let found = self.storage.list(&out).ok().and_then(|entries| {
+                entries
+                    .into_iter()
+                    .map(|e| e.name)
+                    .find(|n| same_path(n, seg))
+            });
+            out = out.join(found.as_deref().unwrap_or(seg));
+        }
+        out
     }
 
     /// Names in a disk folder; a missing folder has none.
@@ -957,6 +1007,80 @@ mod tests {
         assert!(d.path().join("manuscript/part").is_dir());
         assert!(!d.path().join("manuscript/chapter").exists());
         assert_eq!(p.manifest(), &before);
+    }
+
+    /// Folder names directly under `rel`, exactly as listed.
+    fn dirs_in(d: &Path, rel: &str) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(d.join(rel))
+            .unwrap()
+            .map(|e| e.unwrap())
+            .filter(|e| e.file_type().unwrap().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// A folder "Λόγος" holding documents A and B, whose disk folder was
+    /// renamed to its NFD spelling before the project was reopened.
+    fn nfd_folder() -> (tempfile::TempDir, Project<FsStorage>, Id, Id, Id) {
+        let (d, mut p, ms) = setup();
+        let f = p
+            .create_folder(Some(&ms), "\u{39b}\u{3cc}\u{3b3}\u{3bf}\u{3c2}")
+            .unwrap();
+        let a = p.create_document(&f, "A", DocKind::Prose).unwrap();
+        let b = p.create_document(&f, "B", DocKind::Prose).unwrap();
+        let nfc = p.manifest().folder(&f).unwrap().path.clone();
+        drop(p);
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc, nfd);
+        std::fs::rename(d.path().join(&nfc), d.path().join(&nfd)).unwrap();
+        let (p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        (d, p, f, a, b)
+    }
+
+    #[test]
+    fn same_path_and_reprefix_compare_in_nfc_by_whole_segments() {
+        assert!(same_path("a/caf\u{e9}", "a/cafe\u{301}"));
+        assert!(!same_path("a/cafe", "a/caf\u{e9}"));
+        assert_eq!(
+            reprefix("m/cafe\u{301}/x.md", "m/caf\u{e9}", "m/new").as_deref(),
+            Some("m/new/x.md")
+        );
+        assert_eq!(
+            reprefix("m/cafe\u{301}", "m/caf\u{e9}", "m/new").as_deref(),
+            Some("m/new")
+        );
+        assert_eq!(reprefix("m/caf\u{e9}s/x.md", "m/caf\u{e9}", "m/new"), None);
+        assert_eq!(reprefix("m", "m/caf\u{e9}", "m/new"), None);
+    }
+
+    #[test]
+    fn a_reorder_in_an_nfd_named_folder_moves_nothing_and_makes_no_twin() {
+        let (d, mut p, f, a, b) = nfd_folder();
+        let before = p.path_of(&a).cloned().unwrap();
+        let dirs = dirs_in(d.path(), "manuscript");
+        let disk_dir = d.path().join(before.parent().unwrap().as_str());
+        let count = || std::fs::read_dir(&disk_dir).unwrap().count();
+        let files = count();
+        p.move_item(&a, Some(&f), 1).unwrap();
+        assert_eq!(children(&p, &f), vec![b, a.clone()]);
+        assert_eq!(dirs_in(d.path(), "manuscript"), dirs);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        assert_eq!(p.path_of(&a), Some(&before));
+        assert!(p.read_item(&a).is_ok());
+        assert_eq!(count(), files);
+    }
+
+    #[test]
+    fn rename_folder_carries_the_items_of_an_nfd_named_disk_folder() {
+        let (d, mut p, f, a, b) = nfd_folder();
+        p.rename_folder(&f, "Words").unwrap();
+        assert_eq!(p.manifest().folder(&f).unwrap().path, "manuscript/words");
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/words/a.md");
+        assert_eq!(p.path_of(&b).unwrap().as_str(), "manuscript/words/b.md");
+        assert!(p.read_item(&a).is_ok() && p.read_item(&b).is_ok());
+        assert_eq!(dirs_in(d.path(), "manuscript"), vec!["words".to_string()]);
     }
 
     #[test]
