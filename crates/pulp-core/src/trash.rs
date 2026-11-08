@@ -327,18 +327,29 @@ impl<S: Storage> Project<S> {
     pub fn restore_from_trash(&mut self, entry: &Id) -> Result<(), ProjectError> {
         let e = load_entry(&self.storage, entry)
             .ok_or_else(|| ProjectError::NotFound(entry.clone()))?;
-        if self.manifest.parent_of(&e.item_id).is_some() {
-            return Err(crate::manifest::ManifestError::DuplicateId(e.item_id.clone()).into());
-        }
-        let parent = e
-            .original_folder
-            .clone()
-            .filter(|f| self.manifest.folder(f).is_some());
         let dir = entry_dir(entry);
-        if e.folder_node.is_some() {
-            self.restore_folder(&e, parent, &dir)?;
+        if let Some((current, _)) = self.manifest.parent_of(&e.item_id) {
+            // The id is already in the tree. With a live file there it is a
+            // real duplicate; with none, the node is missing its file and the
+            // trashed one is put back in the node's current folder (R63).
+            let live = self
+                .index
+                .get(&e.item_id)
+                .is_some_and(|p| self.storage.exists(p));
+            if live || e.folder_node.is_some() {
+                return Err(crate::manifest::ManifestError::DuplicateId(e.item_id.clone()).into());
+            }
+            self.restore_item(&e, current, &dir, true)?;
         } else {
-            self.restore_item(&e, parent, &dir)?;
+            let parent = e
+                .original_folder
+                .clone()
+                .filter(|f| self.manifest.folder(f).is_some());
+            if e.folder_node.is_some() {
+                self.restore_folder(&e, parent, &dir)?;
+            } else {
+                self.restore_item(&e, parent, &dir, false)?;
+            }
         }
         // Done and saved: the entry is spent. Leftovers here cannot lose work.
         let _ = self.storage.remove_file(&dir.join(ENTRY_FILE));
@@ -346,11 +357,14 @@ impl<S: Storage> Project<S> {
         Ok(())
     }
 
+    /// Moves the stored file (and companions) into `parent`'s disk folder.
+    /// `in_tree`: the node is already in the tree, so only the index changes.
     fn restore_item(
         &mut self,
         e: &TrashEntry,
         parent: Option<Id>,
         dir: &RelPath,
+        in_tree: bool,
     ) -> Result<(), ProjectError> {
         let stored = dir.join(&e.files[0]);
         let bytes = self.storage.read(&stored)?;
@@ -381,6 +395,10 @@ impl<S: Storage> Project<S> {
             return Err(err);
         }
 
+        if in_tree {
+            self.index.insert(e.item_id.clone(), new_path);
+            return Ok(());
+        }
         let snap = self.capture_state();
         let saved = self
             .manifest
@@ -670,13 +688,16 @@ mod tests {
     }
 
     #[test]
-    fn restore_of_an_id_already_in_the_tree_is_a_duplicate_and_changes_nothing() {
+    fn restore_of_an_id_in_the_tree_with_a_live_file_is_a_duplicate_and_changes_nothing() {
         let (d, mut p, ms) = setup();
         let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
         let text = read(d.path(), "manuscript/a.md");
         let entry = p.trash_item(&a).unwrap();
-        // The same item id is back in the tree by another route.
+        // The same item is back in the tree, with a live file, by another route.
+        std::fs::write(d.path().join("manuscript/a.md"), &text).unwrap();
         p.manifest.insert_item(Some(&ms), a.clone(), None).unwrap();
+        p.index
+            .insert(a.clone(), RelPath::new("manuscript/a.md").unwrap());
         let before = p.manifest().clone();
         let json = entry_json(d.path(), &entry);
         let r = p.restore_from_trash(&entry);
@@ -687,7 +708,56 @@ mod tests {
         assert_eq!(p.manifest(), &before);
         assert_eq!(entry_json(d.path(), &entry), json);
         assert_eq!(read(d.path(), &format!(".trash/{entry}/a.md")), text);
+        assert_eq!(read(d.path(), "manuscript/a.md"), text);
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/a.md");
+        assert!(!d.path().join("manuscript/a-2.md").exists());
+    }
+
+    #[test]
+    fn restore_of_an_id_in_the_tree_with_no_file_reattaches_it_in_its_current_folder() {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.save_body(&a, "words\n").unwrap();
+        let entry = p.trash_item(&a).unwrap();
+        // The id is back in the tree, in another folder, with no file.
+        p.manifest
+            .insert_item(Some(&part), a.clone(), None)
+            .unwrap();
+        p.save_manifest().unwrap();
+        let before = p.manifest().clone();
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(p.manifest(), &before, "no second node");
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/part/a.md");
+        assert_eq!(p.read_item(&a).unwrap().body, "words\n");
         assert!(!d.path().join("manuscript/a.md").exists());
+        assert!(!d.path().join(format!(".trash/{entry}")).exists());
+        let (reopened, report) = Project::open(FsStorage::new(d.path())).unwrap();
+        assert!(report.missing.is_empty() && report.found.is_empty());
+        assert_eq!(
+            reopened.path_of(&a).unwrap().as_str(),
+            "manuscript/part/a.md"
+        );
+    }
+
+    #[test]
+    fn a_manifest_restore_from_before_a_trash_leaves_the_item_restorable() {
+        use crate::history::{HistoryTarget, SnapshotReason};
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.save_body(&a, "words\n").unwrap();
+        let snap = p
+            .snapshot(HistoryTarget::Manifest, SnapshotReason::Named("x".into()))
+            .unwrap();
+        let entry = p.trash_item(&a).unwrap();
+        p.restore_snapshot(&HistoryTarget::Manifest, &snap).unwrap();
+        assert!(p.manifest().parent_of(&a).is_some(), "back as missing");
+        assert!(p.path_of(&a).is_none());
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/a.md");
+        assert_eq!(p.read_item(&a).unwrap().body, "words\n");
+        assert_eq!(p.manifest().item_ids(), vec![a.clone()]);
+        assert!(d.path().join("manuscript/a.md").is_file());
     }
 
     #[test]
