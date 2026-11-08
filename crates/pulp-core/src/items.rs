@@ -384,24 +384,31 @@ impl<S: Storage> Project<S> {
         }
     }
 
-    /// `path` as it is spelled on disk: each segment that does not exist as
-    /// given is replaced by a sibling whose name is the same in NFC, if
-    /// there is one. Segments with no match are kept as given.
+    /// `path` as it is spelled on disk. Each segment is looked up by listing
+    /// its parent, never by `exists` (a normalisation-blind filesystem such
+    /// as APFS answers `exists` for any spelling): a listed name exactly equal
+    /// to the segment wins, else a listed name equal to it in NFC, else the
+    /// segment as given. If a parent cannot be listed (for example it does
+    /// not exist), that segment and every later one are kept as given.
     pub(crate) fn on_disk(&self, path: &RelPath) -> RelPath {
         let mut out = RelPath::root();
+        let mut listable = true;
         for seg in path.as_str().split('/').filter(|s| !s.is_empty()) {
-            let direct = out.join(seg);
-            if self.storage.exists(&direct) {
-                out = direct;
-                continue;
+            let mut chosen = seg.to_string();
+            if listable {
+                match self.storage.list(&out) {
+                    Ok(entries) => {
+                        let names: Vec<String> = entries.into_iter().map(|e| e.name).collect();
+                        let exact = names.iter().any(|n| n == seg);
+                        let same = names.into_iter().find(|n| same_path(n, seg));
+                        if let (false, Some(n)) = (exact, same) {
+                            chosen = n;
+                        }
+                    }
+                    Err(_) => listable = false,
+                }
             }
-            let found = self.storage.list(&out).ok().and_then(|entries| {
-                entries
-                    .into_iter()
-                    .map(|e| e.name)
-                    .find(|n| same_path(n, seg))
-            });
-            out = out.join(found.as_deref().unwrap_or(seg));
+            out = out.join(&chosen);
         }
         out
     }
@@ -1111,6 +1118,57 @@ mod tests {
             p.path_of(&c).unwrap().parent(),
             p.path_of(&a).unwrap().parent()
         );
+        assert!(p.read_item(&c).is_ok());
+    }
+
+    /// Wraps `FsStorage` and answers `exists` as APFS does: true when any
+    /// entry of the parent is the same name in NFC, whatever its spelling.
+    struct ApfsLike(FsStorage);
+
+    impl Storage for ApfsLike {
+        fn read(&self, p: &RelPath) -> Result<Vec<u8>, StorageError> {
+            self.0.read(p)
+        }
+        fn write_atomic(&self, p: &RelPath, data: &[u8]) -> Result<(), StorageError> {
+            self.0.write_atomic(p, data)
+        }
+        fn list(&self, dir: &RelPath) -> Result<Vec<Entry>, StorageError> {
+            self.0.list(dir)
+        }
+        fn create_dir_all(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.0.create_dir_all(p)
+        }
+        fn rename(&self, from: &RelPath, to: &RelPath) -> Result<(), StorageError> {
+            self.0.rename(from, to)
+        }
+        fn remove_file(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.0.remove_file(p)
+        }
+        fn remove_dir(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.0.remove_dir(p)
+        }
+        fn exists(&self, p: &RelPath) -> bool {
+            let parent = p.parent().unwrap_or_else(RelPath::root);
+            let last = p.as_str().rsplit('/').next().unwrap_or("");
+            self.0
+                .list(&parent)
+                .map(|v| v.iter().any(|e| same_path(&e.name, last)))
+                .unwrap_or(false)
+        }
+    }
+
+    #[test]
+    fn create_document_on_a_normalisation_blind_filesystem_keeps_the_disk_spelling() {
+        let (d, p, f, a, _b) = nfd_folder();
+        drop(p);
+        let (mut p, _) = Project::open(ApfsLike(FsStorage::new(d.path()))).unwrap();
+        let before = dirs_in(d.path(), "manuscript");
+        let c = p.create_document(&f, "C", DocKind::Prose).unwrap();
+        assert_eq!(
+            p.path_of(&c).unwrap().parent(),
+            p.path_of(&a).unwrap().parent()
+        );
+        assert_eq!(dirs_in(d.path(), "manuscript"), before);
         assert!(p.read_item(&c).is_ok());
     }
 
