@@ -327,9 +327,7 @@ impl<S: Storage> Project<S> {
             };
             // A move never renames the file: keep its current stem and only
             // add a suffix if that clashes in the destination.
-            let file = cur.file_name();
-            let (stem, ext) = file.rsplit_once('.').unwrap_or((file, ""));
-            let name = self.pick_name(&dest, stem, ext, entries, None, true);
+            let name = self.keep_name(&dest, cur.file_name(), entries, true);
             new_path = dest.join(&name);
             moves = self.plan_moves(&cur, &new_path);
             if let Err(e) = self.move_files(&moves) {
@@ -443,6 +441,34 @@ impl<S: Storage> Project<S> {
             }
             taken.push(name);
         }
+    }
+
+    /// `name` itself when it is not in `taken` (compared like `unique_name`)
+    /// and it (and, for documents, every companion path) is free in `dir`, so a hand-made name is never capped or trimmed;
+    /// otherwise the first free suffixed name from `pick_name` (R70).
+    pub(crate) fn keep_name(
+        &self,
+        dir: &RelPath,
+        name: &str,
+        taken: Vec<String>,
+        with_companions: bool,
+    ) -> String {
+        let target = dir.join(name);
+        let free = !taken.iter().any(|t| fold(t) == fold(name))
+            && !self.storage.exists(&target)
+            && (!with_companions
+                || companions_of(&target)
+                    .iter()
+                    .all(|c| !self.storage.exists(c)));
+        if free {
+            return name.to_string();
+        }
+        let (stem, ext) = if with_companions {
+            name.rsplit_once('.').unwrap_or((name, ""))
+        } else {
+            (name, "")
+        };
+        self.pick_name(dir, stem, ext, taken, None, with_companions)
     }
 
     /// The document first, then each companion that exists.
@@ -1102,6 +1128,27 @@ mod tests {
         p.rename_folder(&part, "Chapter").unwrap();
         assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/chapter/a.md");
         assert!(p.read_item(&a).is_ok());
+    }
+
+    #[test]
+    fn a_move_keeps_a_hand_named_stem_longer_than_the_slug_limit() {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let id = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
+        drop(p);
+        let long = format!("chapter-{}.md", "x".repeat(62));
+        std::fs::rename(
+            d.path().join("manuscript/arrival.md"),
+            d.path().join("manuscript").join(&long),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        p.move_item(&id, Some(&part), 0).unwrap();
+        assert_eq!(
+            p.path_of(&id).unwrap().as_str(),
+            format!("manuscript/part/{long}")
+        );
+        assert!(d.path().join("manuscript/part").join(&long).is_file());
     }
 
     #[test]

@@ -373,9 +373,7 @@ impl<S: Storage> Project<S> {
                 return Err(err);
             }
         };
-        let original = e.files[0].as_str();
-        let (stem, ext) = original.rsplit_once('.').unwrap_or((original, ""));
-        let name = self.pick_name(&dest, stem, ext, entries, None, true);
+        let name = self.keep_name(&dest, &e.files[0], entries, true);
         let new_path = dest.join(&name);
         let moves = self.plan_moves(&stored, &new_path);
         if let Err(err) = self.move_files(&moves) {
@@ -434,7 +432,7 @@ impl<S: Storage> Project<S> {
                 return Err(err);
             }
         };
-        let name = self.pick_name(&dest, &e.files[0], "", entries, None, false);
+        let name = self.keep_name(&dest, &e.files[0], entries, false);
         let new_path = dest.join(&name);
         let moves = vec![(stored, new_path.clone())];
         if let Err(err) = self.move_files(&moves) {
@@ -1028,6 +1026,67 @@ mod tests {
         let path = p.path_of(&a).unwrap();
         assert!(d.path().join(path.as_str()).is_file());
         assert!(!d.path().join(format!(".trash/{entry}")).exists());
+    }
+
+    #[test]
+    fn trash_and_restore_keep_a_hand_named_stem_longer_than_the_slug_limit() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
+        drop(p);
+        let long = format!("chapter-{}", "x".repeat(62));
+        std::fs::rename(
+            d.path().join("manuscript/arrival.md"),
+            d.path().join(format!("manuscript/{long}.md")),
+        )
+        .unwrap();
+        std::fs::write(
+            d.path().join(format!("manuscript/{long}.comments.json")),
+            "[c]",
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let entry = p.trash_item(&a).unwrap();
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(
+            p.path_of(&a).unwrap().as_str(),
+            format!("manuscript/{long}.md")
+        );
+        assert_eq!(
+            read(d.path(), &format!("manuscript/{long}.comments.json")),
+            b"[c]"
+        );
+    }
+
+    #[test]
+    fn a_folder_restore_keeps_a_hand_named_folder_name_longer_than_the_slug_limit() {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let a = p.create_document(&part, "A", DocKind::Prose).unwrap();
+        drop(p);
+        let long = format!("part-{}", "x".repeat(65));
+        std::fs::rename(
+            d.path().join("manuscript/part"),
+            d.path().join(format!("manuscript/{long}")),
+        )
+        .unwrap();
+        let mp = d.path().join(MANIFEST_FILE);
+        let text = std::fs::read_to_string(&mp).unwrap();
+        std::fs::write(
+            &mp,
+            text.replace("\"manuscript/part\"", &format!("\"manuscript/{long}\"")),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let entry = p.trash_folder(&part).unwrap();
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(
+            p.manifest().folder(&part).unwrap().path,
+            format!("manuscript/{long}")
+        );
+        assert_eq!(
+            p.path_of(&a).unwrap().as_str(),
+            format!("manuscript/{long}/a.md")
+        );
     }
 
     #[test]

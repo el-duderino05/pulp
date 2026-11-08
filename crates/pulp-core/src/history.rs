@@ -1361,6 +1361,29 @@ mod tests {
     }
 
     #[test]
+    fn undo_keeps_a_hand_named_stem_longer_than_the_slug_limit() {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let a = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
+        drop(p);
+        let long = format!("chapter-{}.md", "x".repeat(62));
+        std::fs::rename(
+            d.path().join("manuscript/arrival.md"),
+            d.path().join("manuscript").join(&long),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let group = p.begin_operation("move", std::slice::from_ref(&a)).unwrap();
+        p.move_item(&a, Some(&part), 0).unwrap();
+        p.undo_operation(&group).unwrap();
+        assert_eq!(
+            p.path_of(&a).unwrap().as_str(),
+            format!("manuscript/{long}")
+        );
+        assert!(d.path().join("manuscript").join(&long).is_file());
+    }
+
+    #[test]
     fn undo_with_the_recorded_path_taken_uses_a_suffix_and_moves_companions() {
         let (d, mut p, ms) = setup();
         let a = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
