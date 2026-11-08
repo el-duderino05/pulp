@@ -163,11 +163,12 @@ fn now_secs() -> DateTime<Utc> {
     DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap_or_else(Utc::now)
 }
 
-/// 2-space pretty JSON with a trailing newline, in NFC.
+/// 2-space pretty JSON with a trailing newline. Free-text fields are
+/// normalised by the caller; paths are kept exactly as on disk (R62).
 fn encode<T: Serialize>(value: &T) -> String {
     let mut s = serde_json::to_string_pretty(value).expect("history JSON always serialises");
     s.push('\n');
-    normalize_text(&s)
+    s
 }
 
 fn load_manifest(bytes: &[u8]) -> Result<Manifest, ProjectError> {
@@ -501,7 +502,7 @@ impl<S: Storage> Project<S> {
         let (word, name, group) = match reason {
             SnapshotReason::Timer => ("timer", None, None),
             SnapshotReason::Close => ("close", None, None),
-            SnapshotReason::Named(n) => ("named", Some(n.clone()), None),
+            SnapshotReason::Named(n) => ("named", Some(normalize_text(n)), None),
             SnapshotReason::Operation(g) => ("operation", None, Some(g.clone())),
         };
         let wire = MetaWire {
@@ -1213,6 +1214,29 @@ mod tests {
             "no suffixed copy: {names:?}"
         );
         assert_eq!(names.len(), 1, "{names:?}");
+    }
+
+    #[test]
+    fn snapshot_metadata_keeps_the_path_as_on_disk_and_normalises_the_name() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "Cafe", DocKind::Prose).unwrap();
+        drop(p);
+        std::fs::rename(
+            d.path().join("manuscript/cafe.md"),
+            d.path().join("manuscript/Cafe\u{301}.md"),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let on_disk = p.path_of(&a).cloned().unwrap();
+        let snap = p
+            .snapshot(
+                HistoryTarget::Item(a.clone()),
+                SnapshotReason::Named("Cafe\u{301}".into()),
+            )
+            .unwrap();
+        let v = json(&read_str(d.path(), &format!(".history/{a}/{snap}.json")));
+        assert_eq!(v["path"], on_disk.as_str());
+        assert_eq!(v["name"], "Caf\u{e9}");
     }
 
     #[test]

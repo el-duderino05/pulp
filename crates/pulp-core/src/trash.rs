@@ -13,7 +13,6 @@ use crate::items::{companions_of, repath_folders};
 use crate::manifest::{FolderNode, Node};
 use crate::project::{Project, ProjectError, scan};
 use crate::storage::{ErrorCause, RelPath, Storage};
-use crate::text::normalize_text;
 use crate::version::FORMAT_VERSION;
 
 const TRASH_DIR: &str = ".trash";
@@ -71,9 +70,11 @@ fn encode(entry: &TrashEntry) -> String {
         files: entry.files.clone(),
         folder_node: entry.folder_node.clone(),
     };
+    // File names and paths are stored exactly as on disk (R62): normalising
+    // them would point the restore at a name that does not exist.
     let mut s = serde_json::to_string_pretty(&wire).expect("an entry always serialises");
     s.push('\n');
-    normalize_text(&s)
+    s
 }
 
 /// A plain file name that is safe to join under the entry folder.
@@ -956,6 +957,48 @@ mod tests {
         assert_eq!(p.path_of(&a).unwrap().as_str(), "part/a.md");
         assert_eq!(p.path_of(&b).unwrap().as_str(), "part/inner/b.md");
         assert!(d.path().join("part/notes.txt").is_file());
+    }
+
+    /// Names in a disk folder, exactly as listed.
+    fn names_in(d: &Path, rel: &str) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(d.join(rel))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn an_nfd_named_item_is_trashed_and_restored_to_its_original_path() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "Cafe", DocKind::Prose).unwrap();
+        p.save_body(&a, "words\n").unwrap();
+        drop(p);
+        std::fs::rename(
+            d.path().join("manuscript/cafe.md"),
+            d.path().join("manuscript/Cafe\u{301}.md"),
+        )
+        .unwrap();
+        std::fs::write(d.path().join("manuscript/Cafe\u{301}.comments.json"), "[c]").unwrap();
+        std::fs::write(d.path().join("manuscript/Cafe\u{301}.md.meta.json"), "{m}").unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        let original = p.path_of(&a).cloned().unwrap();
+        let listed = names_in(d.path(), "manuscript");
+        let entry = p.trash_item(&a).unwrap();
+        assert!(names_in(d.path(), "manuscript").is_empty());
+
+        p.restore_from_trash(&entry).unwrap();
+        assert_eq!(p.path_of(&a), Some(&original));
+        assert_eq!(p.read_item(&a).unwrap().body, "words\n");
+        assert_eq!(names_in(d.path(), "manuscript"), listed);
+        for (c, bytes) in companions_of(&original)
+            .iter()
+            .zip([b"[c]".as_slice(), b"{m}".as_slice()])
+        {
+            assert_eq!(read(d.path(), c.as_str()), bytes);
+        }
+        assert!(!d.path().join(format!(".trash/{entry}")).exists());
     }
 
     #[test]
