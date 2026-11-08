@@ -12,7 +12,7 @@ use crate::brand::MANIFEST_FILE;
 use crate::header::parse_markdown_item;
 use crate::id::Id;
 use crate::items::{Snapshot as State, companions_of, parse_verified};
-use crate::manifest::{Manifest, ManifestError};
+use crate::manifest::{Manifest, ManifestError, Node};
 use crate::project::{Project, ProjectError};
 use crate::storage::{ErrorCause, RelPath, Storage};
 use crate::text::normalize_text;
@@ -178,6 +178,16 @@ fn load_manifest(bytes: &[u8]) -> Result<Manifest, ProjectError> {
         Ok(m) => Ok(m),
         Err(ManifestError::Version(v)) => Err(ProjectError::Version(v)),
         Err(e) => Err(ProjectError::Manifest(e)),
+    }
+}
+
+/// Every id in `nodes`, folders and items.
+fn collect_ids(nodes: &[Node], out: &mut Vec<Id>) {
+    for n in nodes {
+        out.push(n.id().clone());
+        if let Node::Folder(f) = n {
+            collect_ids(&f.children, out);
+        }
     }
 }
 
@@ -677,6 +687,22 @@ impl<S: Storage> Project<S> {
                         recorded,
                     });
                 }
+            }
+        }
+        // Restoring the group's manifest must not revert changes made to the
+        // rest of the tree since (R66): every id other than the group's own
+        // items must be the same now as then.
+        if let Some(m) = &manifest {
+            let own: HashSet<&Id> = steps.iter().map(|s| &s.id).collect();
+            let others = |tree: &[Node]| -> HashSet<Id> {
+                let mut ids = Vec::new();
+                collect_ids(tree, &mut ids);
+                ids.into_iter().filter(|i| !own.contains(i)).collect()
+            };
+            if others(&self.manifest.tree) != others(&m.snap.tree) {
+                return Err(ProjectError::History(format!(
+                    "the project structure changed since operation {group}, so it cannot be undone"
+                )));
             }
         }
         Ok((steps, manifest))
@@ -1268,9 +1294,9 @@ mod tests {
     fn undo_works_when_the_manifest_file_is_missing() {
         let (d, mut p, ms) = setup();
         let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        p.create_folder(Some(&ms), "Part").unwrap();
         let before = p.manifest().to_json();
         let group = p.begin_operation("op", std::slice::from_ref(&a)).unwrap();
-        p.create_folder(Some(&ms), "Part").unwrap();
         let in_memory = p.manifest().to_json();
         std::fs::remove_file(d.path().join(MANIFEST_FILE)).unwrap();
         p.undo_operation(&group).unwrap();
@@ -1388,6 +1414,9 @@ mod tests {
         let (d, mut p, ms) = setup();
         let a = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
         p.save_body(&a, "a1\n").unwrap();
+        // Created before the operation, so the tree's structure is the same
+        // at undo time (R66); it takes the old name by a rename later.
+        let other = p.create_document(&ms, "Other", DocKind::Prose).unwrap();
         let group = p
             .begin_operation("rename", std::slice::from_ref(&a))
             .unwrap();
@@ -1395,7 +1424,7 @@ mod tests {
         write(d.path(), "manuscript/the-arrival.comments.json", b"[1]");
         write(d.path(), "manuscript/the-arrival.md.meta.json", b"{}");
         // Another file takes the old name.
-        let other = p.create_document(&ms, "Arrival", DocKind::Prose).unwrap();
+        p.rename_item(&other, "Arrival").unwrap();
         assert_eq!(p.path_of(&other).unwrap().as_str(), "manuscript/arrival.md");
         let other_bytes = read(d.path(), "manuscript/arrival.md");
 
@@ -1457,6 +1486,44 @@ mod tests {
     }
 
     #[test]
+    fn undo_after_a_document_was_created_is_refused_and_changes_nothing() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        let group = p.begin_operation("op", std::slice::from_ref(&a)).unwrap();
+        p.save_body(&a, "changed\n").unwrap();
+        let c = p.create_document(&ms, "C", DocKind::Prose).unwrap();
+        let files = tree(d.path());
+        let manifest = p.manifest().to_json();
+        let r = p.undo_operation(&group);
+        assert!(
+            matches!(&r, Err(ProjectError::History(m)) if m.contains("structure changed")),
+            "{r:?}"
+        );
+        assert_eq!(tree(d.path()), files, "no file changed, none added");
+        assert_eq!(p.manifest().to_json(), manifest);
+        assert_eq!(p.read_item(&a).unwrap().body, "changed\n");
+        assert!(p.read_item(&c).is_ok());
+    }
+
+    #[test]
+    fn undo_after_an_unrelated_item_was_trashed_is_refused_and_changes_nothing() {
+        let (d, mut p, ms) = setup();
+        let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
+        let b = p.create_document(&ms, "B", DocKind::Prose).unwrap();
+        let group = p.begin_operation("op", std::slice::from_ref(&a)).unwrap();
+        let entry = p.trash_item(&b).unwrap();
+        let files = tree(d.path());
+        let manifest = p.manifest().to_json();
+        let r = p.undo_operation(&group);
+        assert!(matches!(r, Err(ProjectError::History(_))), "{r:?}");
+        assert_eq!(tree(d.path()), files);
+        assert_eq!(p.manifest().to_json(), manifest);
+        assert!(p.manifest().parent_of(&b).is_none(), "not back as missing");
+        p.restore_from_trash(&entry).unwrap();
+        assert!(p.read_item(&b).is_ok());
+    }
+
+    #[test]
     fn undo_with_an_unreadable_group_is_an_error_and_changes_nothing() {
         let (d, mut p, ms) = setup();
         let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
@@ -1474,9 +1541,9 @@ mod tests {
         let (_d, mut p, ms) = setup();
         let a = p.create_document(&ms, "A", DocKind::Prose).unwrap();
         p.save_body(&a, "one\n").unwrap();
+        p.create_folder(Some(&ms), "Part").unwrap();
         let group = p.begin_operation("op", std::slice::from_ref(&a)).unwrap();
         p.save_body(&a, "two\n").unwrap();
-        p.create_folder(Some(&ms), "Part").unwrap();
         let manifest_after = p.manifest().to_json();
 
         p.undo_operation(&group).unwrap();
