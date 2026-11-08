@@ -368,13 +368,15 @@ impl<S: Storage> Project<S> {
         Ok((path, item))
     }
 
-    /// The disk folder of a manifest folder (`None` is the project root).
+    /// The disk folder of a manifest folder (`None` is the project root),
+    /// spelled as on disk when an existing folder differs from the manifest
+    /// only in normalisation, so no twin folder is made (R74).
     pub(crate) fn disk_dir(&self, folder: Option<&Id>) -> Result<RelPath, ProjectError> {
         let Some(id) = folder else {
             return Ok(RelPath::root());
         };
         match self.manifest.folder(id) {
-            Some(f) => Ok(RelPath::new(&f.path)?),
+            Some(f) => Ok(self.on_disk(&RelPath::new(&f.path)?)),
             None if self.manifest.parent_of(id).is_some() => {
                 Err(ProjectError::NotAFolder(id.clone()))
             }
@@ -1096,6 +1098,52 @@ mod tests {
         assert_eq!(p.path_of(&a), Some(&before));
         assert!(p.read_item(&a).is_ok());
         assert_eq!(count(), files);
+    }
+
+    #[test]
+    fn create_document_in_an_nfd_named_folder_reuses_its_disk_folder() {
+        let (d, mut p, f, a, _b) = nfd_folder();
+        let dirs = dirs_in(d.path(), "manuscript");
+        let c = p.create_document(&f, "C", DocKind::Prose).unwrap();
+        assert_eq!(dirs_in(d.path(), "manuscript"), dirs);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        assert_eq!(
+            p.path_of(&c).unwrap().parent(),
+            p.path_of(&a).unwrap().parent()
+        );
+        assert!(p.read_item(&c).is_ok());
+    }
+
+    #[test]
+    fn create_folder_in_an_nfd_named_folder_reuses_its_disk_folder() {
+        let (d, mut p, f, a, _b) = nfd_folder();
+        let dirs = dirs_in(d.path(), "manuscript");
+        let inner = p.create_folder(Some(&f), "Inner").unwrap();
+        assert_eq!(dirs_in(d.path(), "manuscript"), dirs);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        let parent = p.path_of(&a).unwrap().parent().unwrap();
+        assert_eq!(
+            dirs_in(d.path(), parent.as_str()),
+            vec!["inner".to_string()]
+        );
+        let x = p.create_document(&inner, "X", DocKind::Prose).unwrap();
+        assert!(p.read_item(&x).is_ok());
+    }
+
+    #[test]
+    fn move_item_into_an_nfd_named_folder_reuses_its_disk_folder() {
+        let (d, mut p, f, a, _b) = nfd_folder();
+        let ms = top_id(&p);
+        let x = p.create_document(&ms, "X", DocKind::Prose).unwrap();
+        let dirs = dirs_in(d.path(), "manuscript");
+        p.move_item(&x, Some(&f), 0).unwrap();
+        assert_eq!(dirs_in(d.path(), "manuscript"), dirs);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        assert_eq!(
+            p.path_of(&x).unwrap().parent(),
+            p.path_of(&a).unwrap().parent()
+        );
+        assert!(p.read_item(&x).is_ok());
     }
 
     #[test]
