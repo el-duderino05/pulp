@@ -315,6 +315,14 @@ impl FsStorage {
             .and_then(|()| {
                 // Close the handle first: Windows cannot rename an open file.
                 drop(file);
+                // A save keeps the permission mode of the file it replaces
+                // (R69). Best effort: the bytes matter more than the mode.
+                #[cfg(unix)]
+                {
+                    if let Ok(meta) = fs::metadata(target) {
+                        let _ = fs::set_permissions(tmp, meta.permissions());
+                    }
+                }
                 fs::rename(tmp, target).map_err(|e| Self::map_io(p, &e))
             });
         if result.is_err() {
@@ -487,6 +495,21 @@ mod tests {
     fn write_atomic_on_root_is_an_error() {
         let (_d, s) = tmp();
         assert!(s.write_atomic(&RelPath::root(), b"x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_the_permission_mode_of_the_file_it_replaces() {
+        use std::os::unix::fs::PermissionsExt;
+        let (d, s) = tmp();
+        let p = RelPath::new("doc.md").unwrap();
+        s.write_atomic(&p, b"one").unwrap();
+        let f = d.path().join("doc.md");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        s.write_atomic(&p, b"two").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"two");
+        let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode {mode:o}");
     }
 
     #[test]
