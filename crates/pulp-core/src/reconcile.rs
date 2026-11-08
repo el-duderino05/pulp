@@ -41,6 +41,10 @@ pub fn reconcile<S: Storage>(
     mut scanned: Vec<ScannedItem>,
 ) -> Result<(HashMap<Id, RelPath>, ReconcileReport), ProjectError> {
     let known: HashSet<Id> = manifest.item_ids().into_iter().collect();
+    let folder_ids: HashSet<Id> = all_ids(&manifest.tree)
+        .into_iter()
+        .filter(|id| !known.contains(id))
+        .collect();
     let mut report = ReconcileReport::default();
     let mut index = HashMap::new();
     let mut additions = Vec::new();
@@ -57,6 +61,14 @@ pub fn reconcile<S: Storage>(
 
     for id in order {
         let group = groups.remove(&id).unwrap_or_default();
+        if folder_ids.contains(&id) {
+            // A file carrying a folder's id is never placed in the tree and
+            // never changed: it is reported for the writer to sort out.
+            let mut all: Vec<RelPath> = group.into_iter().map(|g| g.path).collect();
+            all.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            report.conflicts.push((id, all));
+            continue;
+        }
         let keeper = resolve_group(storage, manifest, &id, group, &mut report, &mut additions);
         if !known.contains(&id) {
             additions.push(Addition {
@@ -70,9 +82,19 @@ pub fn reconcile<S: Storage>(
 
     additions.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
     for add in additions {
+        // Placing one file can fail without failing the open: the file is
+        // left where it is and reported (R67).
         let dir = add.path.parent().unwrap_or_else(RelPath::root);
-        let folder = folder_for(manifest, dir.as_str())?;
-        manifest.insert_item(folder.as_ref(), add.id.clone(), None)?;
+        let placed = folder_for(manifest, dir.as_str()).and_then(|folder| {
+            manifest
+                .insert_item(folder.as_ref(), add.id.clone(), None)
+                .map_err(ProjectError::from)
+        });
+        if placed.is_err() {
+            index.remove(&add.id);
+            report.conflicts.push((add.id, vec![add.path]));
+            continue;
+        }
         index.insert(add.id.clone(), add.path);
         if add.found {
             report.found.push(add.id);
@@ -192,6 +214,18 @@ fn resolve_newer<S: Storage>(
         });
     }
     Ok(())
+}
+
+/// Every id in the tree, folders and items.
+fn all_ids(nodes: &[Node]) -> Vec<Id> {
+    let mut out = Vec::new();
+    for n in nodes {
+        out.push(n.id().clone());
+        if let Node::Folder(f) = n {
+            out.extend(all_ids(&f.children));
+        }
+    }
+    out
 }
 
 /// The id of the folder whose path is `path`, compared in NFC (R65).
@@ -670,6 +704,32 @@ mod tests {
             .filter(|n| matches!(n, Node::Folder(_)))
             .count();
         assert_eq!(folders, 1, "no twin folder node");
+    }
+
+    #[test]
+    fn a_file_whose_id_is_a_folder_id_is_a_conflict_and_the_open_succeeds() {
+        let d = new_project();
+        let ms = {
+            let (p, _) = open(&d);
+            p.manifest()
+                .folder_by_path("manuscript")
+                .unwrap()
+                .id
+                .clone()
+        };
+        let mut h = header("Odd");
+        h.id = ms.clone();
+        put_item(d.path(), "notes/odd.md", &h, "precious\n");
+        let bytes = read(d.path(), "notes/odd.md");
+        let manifest = read(d.path(), crate::brand::MANIFEST_FILE);
+        let (p, report) = Project::open(FsStorage::new(d.path())).expect("the open succeeds");
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(report.conflicts[0].0, ms);
+        assert_eq!(paths(&report.conflicts[0].1), vec!["notes/odd.md"]);
+        assert!(report.found.is_empty());
+        assert!(p.path_of(&ms).is_none());
+        assert_eq!(read(d.path(), "notes/odd.md"), bytes);
+        assert_eq!(read(d.path(), crate::brand::MANIFEST_FILE), manifest);
     }
 
     #[test]
