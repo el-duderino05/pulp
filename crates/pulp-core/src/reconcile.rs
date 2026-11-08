@@ -175,7 +175,7 @@ fn resolve_newer<S: Storage>(
     additions: &mut Vec<Addition>,
 ) -> Result<(), ProjectError> {
     let bytes = storage.read(newer)?;
-    if bytes == storage.read(oldest)? {
+    if bytes == storage.read(oldest)? && companions_match(storage, newer, oldest)? {
         let mut files = vec![newer.clone()];
         files.extend(
             companions_of(newer)
@@ -214,6 +214,28 @@ fn resolve_newer<S: Storage>(
         });
     }
     Ok(())
+}
+
+/// True when each companion `newer` has is byte-identical to the keeper's
+/// companion of the same kind, so trashing `newer` loses nothing (R64). A
+/// kind the keeper lacks does not match.
+fn companions_match<S: Storage>(
+    storage: &S,
+    newer: &RelPath,
+    oldest: &RelPath,
+) -> Result<bool, ProjectError> {
+    for (n, o) in companions_of(newer)
+        .iter()
+        .zip(companions_of(oldest).iter())
+    {
+        if !storage.exists(n) {
+            continue;
+        }
+        if !storage.exists(o) || storage.read(n)? != storage.read(o)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Every id in the tree, folders and items.
@@ -370,8 +392,11 @@ mod tests {
             put_item(d.path(), rel, &h, "same\n");
             at(d.path(), rel, t);
         }
-        put(d.path(), "manuscript/a-2.comments.json", b"[2]");
-        put(d.path(), "manuscript/a-3.comments.json", b"[3]");
+        // The keeper has the same companion bytes, so the copies are
+        // identical duplicates (R64).
+        for c in ["a", "a-2", "a-3"] {
+            put(d.path(), &format!("manuscript/{c}.comments.json"), b"[c]");
+        }
         let (p, report) = open(&d);
         assert_eq!(
             paths(&report.duplicates_trashed),
@@ -393,6 +418,46 @@ mod tests {
         originals.sort();
         assert_eq!(originals, vec!["manuscript/a-2.md", "manuscript/a-3.md"]);
         assert_eq!(report.found, vec![h.id.clone()]);
+    }
+
+    #[test]
+    fn identical_copies_with_their_own_companions_are_reassigned_and_companions_kept() {
+        let d = new_project();
+        let h = header("A");
+        for (rel, t) in [
+            ("manuscript/a.md", 10),
+            ("manuscript/a-2.md", 20),
+            ("manuscript/a-3.md", 30),
+        ] {
+            put_item(d.path(), rel, &h, "same\n");
+            at(d.path(), rel, t);
+        }
+        // a-2 has a comments file that differs from the keeper's; a-3 has a
+        // kind of companion the keeper lacks.
+        put(d.path(), "manuscript/a.comments.json", b"[1]");
+        put(d.path(), "manuscript/a-2.comments.json", b"[2]");
+        put(d.path(), "manuscript/a-3.md.meta.json", b"{3}");
+        let (p, report) = open(&d);
+        assert!(report.duplicates_trashed.is_empty());
+        let reassigned: Vec<&str> = report
+            .copies_reassigned
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect();
+        assert_eq!(reassigned, vec!["manuscript/a-2.md", "manuscript/a-3.md"]);
+        for (rel, bytes) in [
+            ("manuscript/a.comments.json", b"[1]".as_slice()),
+            ("manuscript/a-2.comments.json", b"[2]".as_slice()),
+            ("manuscript/a-3.md.meta.json", b"{3}".as_slice()),
+        ] {
+            assert_eq!(read(d.path(), rel), bytes, "{rel}");
+        }
+        for (path, id) in &report.copies_reassigned {
+            assert_eq!(p.path_of(id), Some(path));
+            assert_ne!(id, &h.id);
+        }
+        assert_eq!(p.path_of(&h.id).unwrap().as_str(), "manuscript/a.md");
+        assert!(p.list_trash().unwrap().is_empty());
     }
 
     #[test]
