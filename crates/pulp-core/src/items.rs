@@ -1084,6 +1084,27 @@ mod tests {
     }
 
     #[test]
+    fn a_backslash_folder_path_loads_with_slashes_and_rename_carries_its_items() {
+        let (d, mut p, ms) = setup();
+        let part = p.create_folder(Some(&ms), "Part").unwrap();
+        let a = p.create_document(&part, "A", DocKind::Prose).unwrap();
+        drop(p);
+        let mp = d.path().join(MANIFEST_FILE);
+        let text = std::fs::read_to_string(&mp).unwrap();
+        assert!(text.contains("\"manuscript/part\""));
+        std::fs::write(
+            &mp,
+            text.replace("\"manuscript/part\"", "\"manuscript\\\\part\""),
+        )
+        .unwrap();
+        let (mut p, _) = Project::open(FsStorage::new(d.path())).unwrap();
+        assert_eq!(p.manifest().folder(&part).unwrap().path, "manuscript/part");
+        p.rename_folder(&part, "Chapter").unwrap();
+        assert_eq!(p.path_of(&a).unwrap().as_str(), "manuscript/chapter/a.md");
+        assert!(p.read_item(&a).is_ok());
+    }
+
+    #[test]
     fn companions_of_lists_the_candidate_paths() {
         let p = RelPath::new("manuscript/arrival.md").unwrap();
         let c: Vec<_> = companions_of(&p)

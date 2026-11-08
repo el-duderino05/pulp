@@ -191,6 +191,19 @@ fn check_tree(nodes: &[Node], seen: &mut HashSet<Id>) -> Result<(), ManifestErro
     Ok(())
 }
 
+/// Stores every folder path in `RelPath` form, so `\` becomes `/` (R68).
+/// Run after `check_tree`, which has checked that each path is valid.
+fn slash_paths(nodes: &mut [Node]) {
+    for n in nodes {
+        if let Node::Folder(f) = n {
+            if let Ok(p) = RelPath::new(&f.path) {
+                f.path = p.as_str().to_string();
+            }
+            slash_paths(&mut f.children);
+        }
+    }
+}
+
 impl Manifest {
     pub fn new(name: &str) -> Manifest {
         Manifest {
@@ -224,9 +237,10 @@ impl Manifest {
             check_readable(u32::try_from(n).unwrap_or(u32::MAX))?;
         }
         validate(SchemaKind::Manifest, &value).map_err(ManifestError::Schema)?;
-        let manifest: Manifest = serde_json::from_value(value)
+        let mut manifest: Manifest = serde_json::from_value(value)
             .map_err(|e| ManifestError::Schema(vec![e.to_string()]))?;
         check_tree(&manifest.tree, &mut HashSet::new())?;
+        slash_paths(&mut manifest.tree);
         Ok(manifest)
     }
 
