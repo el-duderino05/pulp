@@ -109,7 +109,7 @@ A folder without `library.json` is not a Library: opening it fails with `NotALib
 
 ### 3.6 History (`.history/`)
 
-- Item snapshot: `.history/<item-id>/<snapshot-id>.snap` (exact file bytes) plus `<snapshot-id>.json` (`{ "item", "takenAt", "reason", "name"?, "group"? }`).
+- Item snapshot: `.history/<item-id>/<snapshot-id>.snap` (exact file bytes) plus `<snapshot-id>.json` (`{ "item", "path", "takenAt", "reason", "name"?, "group"? }`). `path` is the item's relative path at snapshot time, stored exactly as on disk (not normalised); undo puts the file back there.
 - Manifest snapshots use the directory `.history/manifest/`.
 - Operation group: `.history/groups/<group-id>.json` (`{ "label", "createdAt", "snapshots": [[target, snapshot-id], …] }`).
 - **Thinning** (master §16): keep everything under 24 hours old; between 24 hours and 30 days keep the newest per UTC calendar day; older keep the newest per ISO week; **named snapshots and snapshots belonging to an operation group are never thinned**.
@@ -117,7 +117,8 @@ A folder without `library.json` is not a Library: opening it fails with `NotALib
 ### 3.7 Trash (`.trash/`)
 
 `.trash/<entry-id>/` holds the item's file, its companions, and `entry.json`:
-`{ "format": 1, "itemId", "originalPath", "originalFolder", "index", "deletedAt", "files": [...] }`.
+`{ "format": 1, "itemId", "originalPath", "originalFolder", "index", "deletedAt", "files": [...], "folderNode"? }`.
+`folderNode` is present only when a whole folder was trashed; it holds that folder's manifest node, so restoring puts the folder back with its contents and order.
 
 Restoring returns the item to its original folder and position (clamped), or to the top level if that folder no longer exists, using the file-name rule on clashes. Permanent deletion and the Library-level trash are Plan 3.
 
@@ -129,6 +130,7 @@ An item at `dir/name.md` has possible companions `dir/name.comments.json` (Miles
 
 - Atomic save writes `~$<file-name>.pulp.tmp` in the same folder, flushes it to disk, then renames it over the target. Names starting with `~$` are treated as temporary by OneDrive and Dropbox.
 - A failed write is retried **5 times, 200 ms apart**, then reported with its cause (`Locked`, `DiskFull`, `PermissionDenied`, `Io`). The original file is never touched by a failed save.
+- On Windows, a rename or move that fails with error 5 ("access denied", usually antivirus or indexing holding the file for a moment) is retried the same way, including the final rename of a save. If it still fails, it is reported as `PermissionDenied`.
 
 ---
 
@@ -162,3 +164,14 @@ Notes and profiles as editors (headers support their `type` already), links, sea
 - Closing Pulp mid-typing loses at most the last ~2 seconds, and never corrupts a file.
 - CI is green on Windows, macOS and Linux.
 - The four technical tests have written results in `docs/specs/`.
+
+---
+
+## 7. Known limits
+
+Accepted for 1a. Each should be revisited before the public release.
+
+- **Unknown header values can change form on save.** Header keys Pulp does not know are kept, but their values are rewritten in a standard form: `1.10` becomes `1.1`, and comments and quote style are lost.
+- **Renames can replace their target.** `Storage::rename` is not a non-replacing rename. The guard is the exists-check before every rename and every new file or folder; nothing is overwritten unless another program creates the target in the instant between check and rename.
+- **Two disk folders whose names differ only in Unicode normalisation** (one NFC, one NFD, for example left by a sync tool) under one manifest folder: renaming or trashing the folder acts on one disk folder but updates the index for both, and a later restore of that folder can be refused as a duplicate until the other folder's items are trashed. No content is lost.
+- **Restoring a trash entry into an existing tree node** does not check that the node is an item. A hand-edited `entry.json` or manifest whose item id equals a folder id could leave a stray index entry.
