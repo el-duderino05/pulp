@@ -1,6 +1,6 @@
 # Milestone 1a — Walking Skeleton: Detailed Spec
 
-**Status:** Draft for review · **Date:** 2026-11-06 · **Parent:** `docs/specs/pulp-master-design.md` (v6), §25 row 1a
+**Status:** Draft for review · **Date:** 2026-11-06 · **Parent:** `docs/specs/pulp-master-design.md` (v8.1), §25 row 1a
 
 Goal: a Pulp you can write in. One Library, projects with a tree of folders and prose documents, an editor with Write/Revise shells, autosave, snapshots and trash, all on the file foundations that every later milestone depends on.
 
@@ -36,6 +36,7 @@ pulp/                         (repository root, Cargo workspace)
 
 - **The core never touches absolute paths directly.** Every file operation goes through the `Storage` trait using `RelPath` (forward-slash, relative to the Library or project root). Desktop uses `FsStorage`; Android and iPad get their own implementations later (master §2, §24).
 - **The core treats document bodies as opaque text.** It owns headers, file names, the manifest and safety; Plan 2's TypeScript converter owns the body's Markdown.
+- **Name-bearing identifiers live in one place.** "Pulp" is a working name (master §23), but it appears in on-disk formats: the manifest file name, the `pulp:` link scheme, temp files, and later the `.pulp` and `.pulptemplate` extensions. All are constants in `pulp-core`'s `brand` module, so a rename before release is a one-file change.
 - **The core is synchronous and single-threaded per project.** The app (Plan 3) serialises calls per project.
 
 ---

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project manifest",
+  "type": "object",
+  "required": ["format", "minReader", "id", "name", "tree", "statuses", "labels", "settings"],
+  "properties": {
+    "format": { "type": "integer", "minimum": 1 },
+    "minReader": { "type": "integer", "minimum": 1 },
+    "id": { "$ref": "#/$defs/id" },
+    "name": { "type": "string" },
+    "tree": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+    "statuses": { "type": "array", "items": { "type": "string" } },
+    "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } },
+    "settings": { "type": "object" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$" },
+    "label": {
+      "type": "object",
+      "required": ["name", "color"],
+      "properties": {
+        "name": { "type": "string" },
+        "color": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "node": {
+      "type": "object",
+      "required": ["node"],
+      "properties": {
+        "node": { "enum": ["folder", "item"] }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/folder" },
+        { "$ref": "#/$defs/item" }
+      ]
+    },
+    "folder": {
+      "type": "object",
+      "required": ["node", "id", "title", "path", "synopsis", "children"],
+      "properties": {
+        "node": { "const": "folder" },
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
+        "synopsis": { "type": "string" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } }
+      },
+      "additionalProperties": true
+    },
+    "item": {
+      "type": "object",
+      "required": ["node", "id"],
+      "properties": {
+        "node": { "const": "item" },
+        "id": { "$ref": "#/$defs/id" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

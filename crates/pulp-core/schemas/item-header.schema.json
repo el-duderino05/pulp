@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Item header",
+  "type": "object",
+  "required": ["format", "minReader", "id", "type", "title", "labels", "synopsis", "created"],
+  "properties": {
+    "format": { "type": "integer", "minimum": 1 },
+    "minReader": { "type": "integer", "minimum": 1 },
+    "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$" },
+    "type": { "enum": ["document", "profile", "note"] },
+    "kind": { "enum": ["prose", "poetry", "screenplay", "stage-play"] },
+    "title": { "type": "string" },
+    "status": { "type": "string" },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "synopsis": { "type": "string" },
+    "created": { "type": "string" }
+  },
+  "additionalProperties": true
+}

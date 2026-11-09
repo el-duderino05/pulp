@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod brand;
+pub mod filename;
+pub mod header;
+pub mod history;
+pub mod id;
+pub mod items;
+pub mod library;
+pub mod manifest;
+pub mod project;
+pub mod reconcile;
+pub mod schema;
+pub mod storage;
+pub mod text;
+pub mod trash;
+pub mod version;

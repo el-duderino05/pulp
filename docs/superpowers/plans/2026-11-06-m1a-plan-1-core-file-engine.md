@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (stable, MSVC toolchain on Windows), crates `ulid`, `unicode-normalization`, `serde`, `serde_json` (feature `preserve_order`), `serde_norway`, `indexmap` (feature `serde`), `chrono` (feature `serde`), `jsonschema`, `thiserror`; dev: `tempfile`. Tauri 2 + React + TypeScript (scaffold only).
 
-**Spec:** `docs/specs/pulp-master-design.md` (v6) and `docs/specs/2026-11-06-m1a-walking-skeleton.md` (the M1a spec; §3 file formats are authoritative for this plan).
+**Spec:** `docs/specs/pulp-master-design.md` (v8.1; the v7, v8 and v8.1 changes were checked and do not affect this plan) and `docs/specs/2026-11-06-m1a-walking-skeleton.md` (the M1a spec; §3 file formats are authoritative for this plan).
 
 ## Global Constraints
 
@@ -18,6 +18,7 @@
 - Text written by the core is UTF-8, LF line endings, Unicode NFC.
 - File names follow the slug rule: accents removed from Latin letters only, forbidden characters `: ? * " < > | \ /` never appear, Windows reserved names avoided, max 60 characters before the extension, case-insensitive clash → `-2`, `-3`…
 - Format version constants: `FORMAT_VERSION = 1`, `READER_VERSION = 1`.
+- **"Pulp" is a working name.** Every name-bearing identifier the core writes to disk or into files is defined once in `crates/pulp-core/src/brand.rs` and used from there: never type `pulp` as a literal in other modules. Renaming before release must be a change to that one file plus its test.
 - Item header keys in order: `format, minReader, id, type, kind, title, status, labels, synopsis, created`, then unknown keys in original order. No `modified` key.
 - JSON files: 2-space pretty print, trailing newline, unknown keys preserved.
 - Atomic save: temp file `~$<file-name>.pulp.tmp` in the same folder, flush, rename over target. Retry 5 times, 200 ms apart, for `Locked` and `Io` errors only.
@@ -210,10 +211,11 @@ Expected: on GitHub › Actions, the CI run is green on all three systems, and t
 ### Task 2: IDs and text normalisation
 
 **Files:**
-- Create: `crates/pulp-core/src/id.rs`, `crates/pulp-core/src/text.rs`, `crates/pulp-core/tests/id_text.rs`
-- Modify: `crates/pulp-core/src/lib.rs` (replace generated content with `pub mod id; pub mod text;`, later tasks add their modules)
+- Create: `crates/pulp-core/src/id.rs`, `crates/pulp-core/src/text.rs`, `crates/pulp-core/src/brand.rs`, `crates/pulp-core/tests/id_text.rs`
+- Modify: `crates/pulp-core/src/lib.rs` (replace generated content with `pub mod brand; pub mod id; pub mod text;`, later tasks add their modules)
 
 **Interfaces:**
+- Produces: in `brand.rs`: `pub const APP_NAME: &str = "Pulp"; pub const MANIFEST_FILE: &str = "pulp-project.json"; pub const LINK_SCHEME: &str = "pulp"; pub const TEMP_SUFFIX: &str = ".pulp.tmp"; pub const PROJECT_ARCHIVE_EXT: &str = "pulp"; pub const TEMPLATE_EXT: &str = "pulptemplate";` (later milestones use the last three).
 - Produces: `pub struct Id` (Clone, Eq, Hash, Ord, Debug, Display, Serialize/Deserialize as a string); `Id::new() -> Id`; `Id::parse(s: &str) -> Result<Id, IdError>` (accepts lowercase, stores uppercase); `Id::as_str(&self) -> &str`; `Id::short(&self) -> &str` (last 6 characters). `pub fn normalize_text(input: &str) -> String`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -221,6 +223,14 @@ Expected: on GitHub › Actions, the CI run is green on all three systems, and t
 ```rust
 // SPDX-License-Identifier: MPL-2.0
 use pulp_core::{id::Id, text::normalize_text};
+
+#[test]
+fn brand_identifiers_are_consistent() {
+    use pulp_core::brand::*;
+    assert_eq!(MANIFEST_FILE, format!("{}-project.json", LINK_SCHEME));
+    assert_eq!(TEMP_SUFFIX, format!(".{}.tmp", PROJECT_ARCHIVE_EXT));
+    assert_eq!(APP_NAME.to_lowercase(), LINK_SCHEME);
+}
 
 #[test]
 fn new_ids_are_26_char_ulids_and_unique() {
@@ -276,13 +286,13 @@ Expected: FAIL to compile (`id` and `text` modules don't exist).
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p pulp-core --test id_text`
-Expected: 6 passed.
+Expected: 7 passed.
 
 - [ ] **Step 5: Commit**
 
 ```powershell
 git add crates/pulp-core
-git commit -s -m "feat(core): ULID ids and text normalisation"
+git commit -s -m "feat(core): ULID ids, text normalisation and name constants"
 ```
 
 ---
@@ -394,7 +404,7 @@ git commit -s -m "feat(core): file-name rule"
   - `pub enum StorageError` (thiserror) with one variant per cause, each carrying the `RelPath` and a message; `fn cause(&self) -> ErrorCause`.
   - `pub trait Storage { fn read(&self, p: &RelPath) -> Result<Vec<u8>, StorageError>; fn write_atomic(&self, p: &RelPath, data: &[u8]) -> Result<(), StorageError>; fn list(&self, dir: &RelPath) -> Result<Vec<Entry>, StorageError>; fn create_dir_all(&self, p: &RelPath) -> Result<(), StorageError>; fn rename(&self, from: &RelPath, to: &RelPath) -> Result<(), StorageError>; fn remove_file(&self, p: &RelPath) -> Result<(), StorageError>; fn exists(&self, p: &RelPath) -> bool; }`
   - `pub struct FsStorage` with `FsStorage::new(root: impl Into<PathBuf>) -> FsStorage`; implements `Storage`.
-  - `pub fn temp_name_for(file_name: &str) -> String` (returns `~$<file_name>.pulp.tmp`); `pub fn is_temp_name(name: &str) -> bool`.
+  - `pub fn temp_name_for(file_name: &str) -> String` (returns `~$` + file name + `brand::TEMP_SUFFIX`, today `~$<file_name>.pulp.tmp`); `pub fn is_temp_name(name: &str) -> bool`.
   - `pub enum Os { Windows, Unix }`; `pub fn classify_os_error(code: i32, os: Os) -> ErrorCause`.
   - `pub fn with_retry<T>(attempts: u32, delay: Duration, op: impl FnMut() -> Result<T, StorageError>) -> Result<T, StorageError>` (retries only `Locked` and `Io`).
   - `pub const SAVE_RETRIES: u32 = 5; pub const RETRY_DELAY: Duration = Duration::from_millis(200);`
@@ -795,7 +805,7 @@ git commit -s -m "feat(core): Library creation, opening and protected folders"
 **Interfaces:**
 - Consumes: `Storage`, `RelPath`, `Manifest`, `parse_markdown_item`, `check_readable`, `slugify`, `unique_name`.
 - Produces:
-  - `pub const PROJECT_DIRS: [&str; 6] = ["manuscript", "notes", "assets", "shelf", ".history", ".trash"];` `pub const MANIFEST_FILE: &str = "pulp-project.json";` `pub const HIDDEN_DIRS: [&str; 3] = [".history", ".trash", ".templates"];`
+  - `pub const PROJECT_DIRS: [&str; 6] = ["manuscript", "notes", "assets", "shelf", ".history", ".trash"];` `pub use crate::brand::MANIFEST_FILE;` `pub const HIDDEN_DIRS: [&str; 3] = [".history", ".trash", ".templates"];`
   - `pub struct Project<S: Storage> { /* storage, manifest, index: HashMap<Id, RelPath> */ }`
   - `Project::create(storage: S, name: &str) -> Result<Project<S>, ProjectError>`; `Project::open(storage: S) -> Result<(Project<S>, ReconcileReport), ProjectError>` (in this task, `ReconcileReport` exists but only `recreated_dirs` is filled; Task 11 completes it); `manifest(&self) -> &Manifest`; `path_of(&self, id: &Id) -> Option<&RelPath>`; `storage(&self) -> &S`.
   - `pub struct ScannedItem { pub id: Id, pub path: RelPath, pub modified: SystemTime }`; `pub fn scan<S: Storage>(storage: &S) -> Result<Vec<ScannedItem>, ProjectError>` (walks every folder except `HIDDEN_DIRS` and temp files; only `.md` files with a valid header count).

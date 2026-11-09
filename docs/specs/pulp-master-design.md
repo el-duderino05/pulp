@@ -1,6 +1,6 @@
 # Pulp — Master Design Spec
 
-**Status:** Draft for review (v8) · **Date:** 2026-11-06 · **Owner:** Gonçalo
+**Status:** Draft for review (v8.1) · **Date:** 2026-11-06 · **Owner:** Gonçalo
 **Working name:** "Pulp" (formerly "Quill"). Still to be checked against existing software (for example Red Hat's Pulp project and the PuLP Python library) before release. See §23.
 
 This is the master spec: product vision, every decision taken so far, and the milestone plan. Each milestone gets its own short detailed spec when work on it starts (§25).
@@ -735,7 +735,7 @@ Gonçalo does not review code directly, so automated tests are the main proof th
 
 - **Code licence:** MPL-2.0.
 - **Trademark policy** on the final name: the code is open to all, but nobody can ship or host a product under the name.
-- **Name:** "Pulp" is a working name only. Before any public release, the final name must be checked against existing software and the EU trademark register (EUIPO). The `.pulp` and `.pulptemplate` extensions change with it.
+- **Name:** "Pulp" is a working name only. Before any public release, the final name must be checked against existing software and the EU trademark register (EUIPO). The `.pulp` and `.pulptemplate` extensions change with it. **Deadline:** the final name is chosen before the first public release *or* before anyone outside the project keeps real work in Pulp, whichever comes first, because the name is written into file formats (manifest file name, `pulp:` links, `.pulp` and `.pulptemplate` files). Until then, those identifiers are defined in one place in the code (`brand` module), and the public repository can be renamed freely (GitHub redirects old links).
 - **Dependency licences** are tracked in a list and checked before each release (code libraries, fonts, dictionaries, CSL styles).
 - **Recommended:** a short consultation with an open-source lawyer before the public 1.0.
 - **Distribution:**
