@@ -25,6 +25,12 @@ The YAML header is defined in the M1a spec (§3.2) and handled by the core. This
 - The reference implementation is markdown-it 15 with markdown-it-sub, markdown-it-sup and Pulp's span rule.
 - Pulp always writes bodies that CommonMark and Pandoc read the same way. For files Pulp did not write, where the two disagree, Pulp follows CommonMark.
 
+One example of each extension:
+
+```markdown
+~~struck~~ H~2~O x^2^ [underlined]{.underline} [small caps]{.smallcaps}
+```
+
 ## 4. Elements
 
 | Style or format | Editor node or mark | Canonical Markdown |
@@ -122,6 +128,25 @@ A paragraph after an empty one.
 - **Loose lists:** a list is loose (blank lines between items and between an item's blocks) if any item has two or more paragraphs, or a nested numbered list that doesn't start at 1. Otherwise it is tight.
 - **Item content:** an item starts with a paragraph, followed by paragraphs or lists.
 
+A list that starts at 3 (numbering counts up from there):
+
+```markdown
+3. three
+4. four
+```
+
+An item with a paragraph, a second paragraph, then a nested list. Two paragraphs make the list loose:
+
+```markdown
+- First paragraph.
+
+  Second paragraph.
+
+  - nested bullet
+
+- Next item
+```
+
 Two adjacent bullet lists, then a tight list with a nested list:
 
 ```markdown
@@ -174,11 +199,44 @@ These are the exact `normalizeDoc` rules, in plain language:
 - Trailing line breaks are dropped.
 - An empty document is one empty paragraph.
 
+For each rule, what the editor has and what is saved (or read back):
+
+| Rule | The editor has | The file holds |
+|---|---|---|
+| NFC | `e` followed by a combining acute accent | the single character `é` |
+| New lines become line breaks | the text `a`, a new line character, `b` | `a\` then a new line, then `b` |
+| Formatting never starts or ends on whitespace | bold `bold ` (with a trailing space), then plain `text` | `**bold** text` |
+| Subscript and superscript never cover whitespace | `x`, then superscript `2 ` (with a trailing space), then `y` | `x^2^ y` |
+| Superscript wins over subscript | `2` marked both subscript and superscript | `^2^` |
+| Strikethrough is removed where it touches subscript | `2` marked both strikethrough and subscript | `H~2~O` (no `~~`) |
+| Trailing line breaks are dropped | `end` followed by a line break | `end` |
+| An empty document is one empty paragraph | nothing at all | the body `""`, read back as one empty paragraph |
+
 ## 10. Limits in 1a
 
 - Files written in another style are kept but not editable. This includes `_italic_`, `*` bullets and hard-wrapped lines; editing them arrives with "New project from folder" in 1b.
 - Pandoc collapses runs of spaces when publishing; Pulp's own files keep them.
 - A list placed directly after a protected list with the same marker is read back as part of that protected block. Its text is kept, but it is no longer editable.
+
+One example for each limit, in the same order:
+
+```markdown
+_kept as written, not editable_
+
+* a bullet written with a star
+
+A hard-wrapped paragraph
+that stays as it is.
+
+two  spaces here (Pandoc publishes one; Pulp keeps both)
+
+* an old list, protected
+* with a star marker
+
+* a new list Pulp writes with a star
+```
+
+The last two lists use the same marker and sit next to each other, so they read back as one protected block. All their text is kept.
 
 ## 11. Examples
 
