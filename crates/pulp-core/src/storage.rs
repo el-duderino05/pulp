@@ -237,6 +237,55 @@ pub fn with_retry<T>(
     }
 }
 
+/// The OS this build runs on, for error classification.
+const CURRENT_OS: Os = if cfg!(windows) { Os::Windows } else { Os::Unix };
+
+/// Whether a failed rename is retried. Only Windows code 5 ("access
+/// denied"), which antivirus and search indexers cause for a moment while
+/// they hold a file open. Every other error behaves as before.
+pub fn rename_is_retried(code: Option<i32>, os: Os) -> bool {
+    os == Os::Windows && code == Some(5)
+}
+
+fn map_io_as(p: &RelPath, e: &io::Error, os: Os) -> StorageError {
+    let cause = match e.raw_os_error() {
+        Some(code) => classify_os_error(code, os),
+        None => match e.kind() {
+            io::ErrorKind::NotFound => ErrorCause::NotFound,
+            io::ErrorKind::PermissionDenied => ErrorCause::PermissionDenied,
+            _ => ErrorCause::Io,
+        },
+    };
+    StorageError::new(cause, p, e.to_string())
+}
+
+/// Runs the rename `op` up to `attempts` times in total, sleeping `delay`
+/// between tries, but only while it fails in a way `rename_is_retried`
+/// accepts. The final error is classified as usual, so a lasting code 5
+/// is still reported as `PermissionDenied`.
+pub(crate) fn rename_with_retry(
+    p: &RelPath,
+    os: Os,
+    attempts: u32,
+    delay: Duration,
+    mut op: impl FnMut() -> io::Result<()>,
+) -> Result<(), StorageError> {
+    let attempts = attempts.max(1);
+    let mut tried = 0;
+    loop {
+        tried += 1;
+        match op() {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if !rename_is_retried(e.raw_os_error(), os) || tried >= attempts {
+                    return Err(map_io_as(p, &e, os));
+                }
+                std::thread::sleep(delay);
+            }
+        }
+    }
+}
+
 pub struct FsStorage {
     root: PathBuf,
 }
@@ -261,16 +310,7 @@ impl FsStorage {
     }
 
     fn map_io(p: &RelPath, e: &io::Error) -> StorageError {
-        let os = if cfg!(windows) { Os::Windows } else { Os::Unix };
-        let cause = match e.raw_os_error() {
-            Some(code) => classify_os_error(code, os),
-            None => match e.kind() {
-                io::ErrorKind::NotFound => ErrorCause::NotFound,
-                io::ErrorKind::PermissionDenied => ErrorCause::PermissionDenied,
-                _ => ErrorCause::Io,
-            },
-        };
-        StorageError::new(cause, p, e.to_string())
+        map_io_as(p, e, CURRENT_OS)
     }
 
     /// Creates the temp file exclusively. A leftover regular file is removed
@@ -323,7 +363,11 @@ impl FsStorage {
                         let _ = fs::set_permissions(tmp, meta.permissions());
                     }
                 }
-                fs::rename(tmp, target).map_err(|e| Self::map_io(p, &e))
+                // Code 5 is retried here; the outer save loop never retries
+                // PermissionDenied, so the two loops do not multiply.
+                rename_with_retry(p, CURRENT_OS, SAVE_RETRIES + 1, RETRY_DELAY, || {
+                    fs::rename(tmp, target)
+                })
             });
         if result.is_err() {
             let _ = fs::remove_file(tmp);
@@ -375,7 +419,10 @@ impl Storage for FsStorage {
     }
 
     fn rename(&self, from: &RelPath, to: &RelPath) -> Result<(), StorageError> {
-        fs::rename(self.resolve(from)?, self.resolve(to)?).map_err(|e| Self::map_io(from, &e))
+        let (src, dst) = (self.resolve(from)?, self.resolve(to)?);
+        rename_with_retry(from, CURRENT_OS, SAVE_RETRIES + 1, RETRY_DELAY, || {
+            fs::rename(&src, &dst)
+        })
     }
 
     fn remove_file(&self, p: &RelPath) -> Result<(), StorageError> {
@@ -547,6 +594,78 @@ mod tests {
             Err(StorageError::Io(p.clone(), "e".into()))
         });
         assert!(start.elapsed() < Duration::from_millis(700));
+    }
+
+    fn os_err(code: i32) -> io::Error {
+        io::Error::from_raw_os_error(code)
+    }
+
+    #[test]
+    fn only_windows_code_5_makes_a_rename_retry() {
+        assert!(rename_is_retried(Some(5), Os::Windows));
+        assert!(!rename_is_retried(Some(5), Os::Unix));
+        assert!(!rename_is_retried(Some(32), Os::Windows));
+        assert!(!rename_is_retried(Some(2), Os::Windows));
+        assert!(!rename_is_retried(None, Os::Windows));
+    }
+
+    #[test]
+    fn windows_code_5_on_rename_is_retried_until_it_succeeds() {
+        let p = RelPath::new("x").unwrap();
+        let calls = Cell::new(0);
+        let r = rename_with_retry(
+            &p,
+            Os::Windows,
+            SAVE_RETRIES + 1,
+            Duration::from_millis(1),
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() < 3 {
+                    Err(os_err(5))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(r.is_ok());
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn windows_code_5_on_rename_gives_up_as_permission_denied_after_5_retries() {
+        let p = RelPath::new("x").unwrap();
+        let calls = Cell::new(0);
+        let r = rename_with_retry(
+            &p,
+            Os::Windows,
+            SAVE_RETRIES + 1,
+            Duration::from_millis(1),
+            || {
+                calls.set(calls.get() + 1);
+                Err(os_err(5))
+            },
+        );
+        assert_eq!(r.unwrap_err().cause(), ErrorCause::PermissionDenied);
+        assert_eq!(calls.get(), 6);
+    }
+
+    #[test]
+    fn other_rename_errors_are_not_retried() {
+        let p = RelPath::new("x").unwrap();
+        for (code, os, cause) in [
+            (32, Os::Windows, ErrorCause::Locked),
+            (2, Os::Windows, ErrorCause::NotFound),
+            (5, Os::Unix, ErrorCause::Io),
+            (13, Os::Unix, ErrorCause::PermissionDenied),
+        ] {
+            let calls = Cell::new(0);
+            let r = rename_with_retry(&p, os, SAVE_RETRIES + 1, Duration::from_millis(1), || {
+                calls.set(calls.get() + 1);
+                Err(os_err(code))
+            });
+            assert_eq!(r.unwrap_err().cause(), cause, "code {code} on {os:?}");
+            assert_eq!(calls.get(), 1, "code {code} on {os:?} must not retry");
+        }
     }
 
     #[test]
