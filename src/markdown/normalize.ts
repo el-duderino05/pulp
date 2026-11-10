@@ -131,6 +131,8 @@ function normalizeInline(children: PulpNode[], heading: boolean): PulpNode[] {
       out.push(u.kind === 'break' ? { type: 'hardBreak' } : u.node);
     }
   }
+  // Merging can bring a base character next to a combining mark: recompose.
+  for (const n of out) if (n.type === 'text') n.text = (n.text ?? '').normalize('NFC');
   return out;
 }
 

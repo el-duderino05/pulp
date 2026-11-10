@@ -45,6 +45,12 @@ describe('normalizeDoc', () => {
     expect(() => n(doc({ type: 'image' }))).toThrow(UnsupportedContentError);
     expect(() => n(doc(p({ type: 'text', text: 'x', marks: [{ type: 'link' }] } as never)))).toThrow(UnsupportedContentError);
   });
+  test('text stays NFC after neighbours merge', () => {
+    expect(n(doc(p(t('e'), t('́'))))).toEqual(doc(p(t('é'))));
+    expect(n(doc(p(t('e', 'bold'), t('́', 'bold'))))).toEqual(doc(p(t('é', 'bold'))));
+    const d = doc(p(t('e', 'bold'), t('́')));
+    expect(n(n(d))).toEqual(n(d));
+  });
   test('is idempotent', () => {
     const d = doc(p(t(' a ', 'bold'), br(), t('b\nc', 'subscript')), h(1, t('x\ny')));
     expect(n(n(d))).toEqual(n(d));
