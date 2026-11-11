@@ -5,7 +5,7 @@ import sup from 'markdown-it-sup';
 import { pulpSpans } from './spans';
 import { checkDoc } from './schema';
 import { normalizeDoc } from './normalize';
-import { serializeBlocks } from './serialize';
+import { nextRun, writeBlock } from './serialize';
 import type { PulpDoc, PulpMarkName, PulpNode } from './model';
 
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false })
@@ -218,12 +218,15 @@ export function convertTopBlock(block: TopBlock): PulpNode | undefined {
 
 const rawBlock = (markdown: string): PulpNode => ({ type: 'rawBlock', attrs: { markdown } });
 
-/** One top-level piece of the body: where it starts, its source text and its tentative node. */
+/** One top-level piece of the body: where it starts, its source text and its node. */
 interface Piece {
   /** Source lines `[start, end)`; the last one is non-blank. */
   start: number;
   end: number;
   slice: string;
+  /** What the slice reads as on its own: an editable node, or raw. */
+  parsed: PulpNode;
+  /** The final node, set by `exactOrRaw`: `parsed`, or raw if `parsed` is not written back as the slice. */
   node: PulpNode;
   /** Whether the piece starts / ends with lines that no top-level token covers. */
   startsUncovered: boolean;
@@ -240,7 +243,7 @@ interface Piece {
 function pieces(src: string, lines: readonly string[]): Piece[] {
   const found: Piece[] = [];
   const covered = new Array<boolean>(lines.length).fill(false);
-  for (const block of topLevelBlocks(md.parse(src, {}))) {
+  for (const block of readTopBlocks(src)) {
     for (let l = block.map[0]; l < block.map[1]; l++) covered[l] = true;
     const slice = sourceSlice(lines, block.map);
     if (slice === '') continue;
@@ -248,7 +251,8 @@ function pieces(src: string, lines: readonly string[]): Piece[] {
       start: block.map[0],
       end: block.map[0] + slice.split('\n').length,
       slice,
-      node: convertTopBlock(block) ?? rawBlock(slice),
+      parsed: convertTopBlock(block) ?? rawBlock(slice),
+      node: rawBlock(slice),
       startsUncovered: false,
       endsUncovered: false,
     });
@@ -262,7 +266,8 @@ function pieces(src: string, lines: readonly string[]): Piece[] {
     const start = l;
     while (l < lines.length && !covered[l] && !isBlank(lines[l])) l++;
     const slice = lines.slice(start, l).join('\n');
-    found.push({ start, end: l, slice, node: rawBlock(slice), startsUncovered: true, endsUncovered: true });
+    const node = rawBlock(slice);
+    found.push({ start, end: l, slice, parsed: node, node, startsUncovered: true, endsUncovered: true });
   }
   found.sort((a, b) => a.start - b.start);
   const out: Piece[] = [];
@@ -270,7 +275,8 @@ function pieces(src: string, lines: readonly string[]): Piece[] {
     const prev = out[out.length - 1];
     if (prev && prev.end === piece.start && (prev.endsUncovered || piece.startsUncovered)) {
       const slice = lines.slice(prev.start, piece.end).join('\n');
-      out[out.length - 1] = { ...prev, end: piece.end, slice, node: rawBlock(slice), endsUncovered: piece.endsUncovered };
+      const node = rawBlock(slice);
+      out[out.length - 1] = { ...prev, end: piece.end, slice, parsed: node, node, endsUncovered: piece.endsUncovered };
     } else {
       out.push(piece);
     }
@@ -281,9 +287,7 @@ function pieces(src: string, lines: readonly string[]): Piece[] {
 /**
  * Parses a Pulp Markdown body into a normalised editor document. A top-level block is
  * editable only if writing the document back reproduces its source text exactly; otherwise
- * it is a raw block holding that text, byte for byte. Making one block raw can change how a
- * neighbour is written (adjacent lists alternate markers), so this repeats until nothing
- * changes. A raw block never turns back, so it ends.
+ * it is a raw block holding that text, byte for byte.
  */
 export function parseBody(markdown: string): PulpDoc {
   const src = prepareSource(markdown);
@@ -298,25 +302,38 @@ export function parseBody(markdown: string): PulpDoc {
   return normalizeDoc({ type: 'doc', content: items.map((it) => it.node) });
 }
 
-/** Makes raw every editable piece not written back exactly as its slice, until nothing changes. */
+/**
+ * Decides each piece's node in one left-to-right pass (R14): a piece stays editable only if
+ * it is written back exactly as its slice. A block's canonical text depends only on the
+ * blocks before it (the list-alternation counter), so block i is decided with the final
+ * decisions for blocks 0..i-1.
+ */
 function exactOrRaw(items: Piece[]): void {
-  for (let changed = true; changed; ) {
-    changed = false;
-    const written = serializeBlocks({ type: 'doc', content: items.map((it) => it.node) });
-    items.forEach((it, idx) => {
-      // `written` is empty when the document reads as one empty paragraph (an `&nbsp;` body).
-      if (it.node.type !== 'rawBlock' && (written.length === 0 || written[idx] !== it.slice)) {
-        it.node = rawBlock(it.slice);
-        changed = true;
-      }
-    });
+  let prev: PulpNode | undefined;
+  let run = 0;
+  for (const it of items) {
+    let node = it.parsed;
+    if (node.type !== 'rawBlock') {
+      const normal = normalizeDoc({ type: 'doc', content: [node] }).content![0];
+      // A body that is one empty paragraph is written "", never as its slice `&nbsp;`.
+      const aloneEmpty = items.length === 1 && normal.type === 'paragraph' && normal.content === undefined;
+      if (aloneEmpty || writeBlock(normal, nextRun(prev, run, normal)) !== it.slice) node = rawBlock(it.slice);
+    }
+    it.node = node;
+    run = nextRun(prev, run, node);
+    prev = node;
   }
 }
 
+/** The top-level blocks of `src`, read with Pulp's parser. */
+export function readTopBlocks(src: string): TopBlock[] {
+  return topLevelBlocks(md.parse(src, {}));
+}
+
 /** Whether `a` and `b`, written with one blank line between, are read as one top-level block. */
-function runTogether(a: string, b: string): boolean {
+export function runTogether(a: string, b: string): boolean {
   const bStart = a.split('\n').length + 1;
-  return topLevelBlocks(md.parse(`${a}\n\n${b}`, {})).some((blk) => blk.map[0] < bStart && blk.map[1] > bStart);
+  return readTopBlocks(`${a}\n\n${b}`).some((blk) => blk.map[0] < bStart && blk.map[1] > bStart);
 }
 
 /**
@@ -335,7 +352,8 @@ function fuseNeighbours(items: Piece[], lines: readonly string[]): boolean {
       continue;
     }
     const slice = lines.slice(a.start, b.end).join('\n');
-    items.splice(i, 2, { ...a, end: b.end, slice, node: rawBlock(slice), endsUncovered: b.endsUncovered });
+    const node = rawBlock(slice);
+    items.splice(i, 2, { ...a, end: b.end, slice, parsed: node, node, endsUncovered: b.endsUncovered });
     merged = true;
     // The merged piece may now run together with its left neighbour too.
     if (i > 0) i--;

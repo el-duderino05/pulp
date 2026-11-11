@@ -296,12 +296,28 @@ function blockLines(node: PulpNode, alternate: boolean): string[] {
   }
 }
 
-/** Renders sibling blocks; the second, fourth... adjacent list of the same kind alternates its marker. */
+/**
+ * The list-alternation counter: `run` for the block before `b`, plus one if `b` has the same
+ * type, otherwise 0. A block's canonical text depends only on the blocks before it.
+ */
+export function nextRun(prev: PulpNode | undefined, run: number, b: PulpNode): number {
+  return prev !== undefined && prev.type === b.type ? run + 1 : 0;
+}
+
+/**
+ * The canonical text of one normalised top-level block whose counter is `run` (0 for the
+ * first block of a run): the second, fourth... list of a run alternates its marker.
+ */
+export function writeBlock(node: PulpNode, run: number): string {
+  return blockLines(node, run % 2 === 1).join('\n');
+}
+
+/** Renders sibling blocks; every even-numbered adjacent list of the same kind alternates its marker. */
 function blockSequenceStrings(blocks: PulpNode[]): string[] {
   let run = 0;
   return blocks.map((b, i) => {
-    run = i > 0 && blocks[i - 1].type === b.type ? run + 1 : 0;
-    return blockLines(b, run % 2 === 1).join('\n');
+    run = nextRun(blocks[i - 1], run, b);
+    return writeBlock(b, run);
   });
 }
 

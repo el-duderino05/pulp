@@ -52,9 +52,19 @@ describe('content Pulp does not understand', () => {
     kept('Text.\n[a]: https://example.org\n');
   });
 
-  test('a block that becomes raw can change its neighbour (repeat until stable)', () => {
+  test('a block after one that becomes raw is written as the first list of its run (R14)', () => {
+    // `- _x_` is raw, so `* b` is the first list after it; Pulp would write `- b`, so it stays raw.
     expect(parseBody('- _x_\n\n* b\n')).toEqual(doc(raw('- _x_'), raw('* b')));
     kept('- _x_\n\n* b\n');
+  });
+
+  test('a writer\'s own list after a protected star list stays editable (R14)', () => {
+    expect(parseBody('* a\n\n- b\n')).toEqual(doc(raw('* a'), ul(li(p(t('b'))))));
+    kept('* a\n\n- b\n');
+    expect(parseBody('* bowls\n\n- new\n')).toEqual(doc(raw('* bowls'), ul(li(p(t('new'))))));
+    kept('* bowls\n\n- new\n');
+    expect(parseBody('* bowls\n* jars\n\n- new\n')).toEqual(doc(raw('* bowls\n* jars'), ul(li(p(t('new'))))));
+    kept('* bowls\n* jars\n\n- new\n');
   });
 
   test('only blank lines between blocks change', () => {
@@ -101,6 +111,15 @@ describe('content Pulp does not understand', () => {
     // as editable or merge with the list before it. Only its text is promised.
     const md = serializeBody(doc(ul(li(p())), raw('* bowls\n* jars\n* a single lamp'), p()));
     expect(md).toBe('- &nbsp;\n\n* bowls\n* jars\n* a single lamp\n\n&nbsp;\n');
+    expect(serializeBody(parseBody(md))).toBe(md);
+  });
+
+  test('a protected indented paragraph after an editable list is read back into the list (§10, R15)', () => {
+    // §10: a protected block that starts with an indent may be read back as part of the
+    // editable list before it. Only its text is promised, and it is kept exactly.
+    const md = serializeBody(doc(raw('  First paragraph.'), ul(li(p(t('new')))), raw('  Second paragraph.')));
+    expect(md).toBe('  First paragraph.\n\n- new\n\n  Second paragraph.\n');
+    expect(parseBody(md)).toEqual(doc(raw('  First paragraph.'), ul(li(p(t('new')), p(t('Second paragraph.'))))));
     expect(serializeBody(parseBody(md))).toBe(md);
   });
 
