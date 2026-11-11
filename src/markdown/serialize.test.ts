@@ -21,4 +21,7 @@ describe('serializeBody, extra', () => {
   test('bold, italic and underline nest in MARK_ORDER', () => {
     expect(serializeBody(doc(p(t('x', 'bold', 'italic', 'underline'))))).toBe('***[x]{.underline}***\n');
   });
+  test('an underscore closer before a letter repairs its flanking', () => {
+    expect(serializeBody(doc(p(t('a', 'bold'), t('b', 'bold', 'italic'), t('c', 'italic'), t('d'))))).toBe('**a*b***_c_&#100;\n');
+  });
 });

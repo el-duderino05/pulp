@@ -9,12 +9,12 @@ const { isPunctChar, isMdAsciiPunct, isWhiteSpace } = new MarkdownIt().utils;
  * One piece of a rendered line of inline text.
  * - `lit`: a literal character, which rule §5(e) may rewrite as `&#N;`.
  * - `fixed`: text that is never changed (escapes, entities, `[`, `~`, `^`...).
- * - `delim`: a `*`-family or `~~` delimiter, checked against the flanking rules.
+ * - `delim`: a `*`/`_`-family or `~~` delimiter, checked against the flanking rules.
+ *   An opener links to its closer (`partner`) so both can switch from `*` to `_`.
  */
-type Piece =
-  | { kind: 'lit'; ch: string; ent: boolean }
-  | { kind: 'fixed'; text: string }
-  | { kind: 'delim'; text: string; family: 'star' | 'tilde'; opens: boolean };
+type Family = 'star' | 'under' | 'tilde';
+type Delim = { kind: 'delim'; text: string; family: Family; opens: boolean; partner?: Delim };
+type Piece = { kind: 'lit'; ch: string; ent: boolean } | { kind: 'fixed'; text: string } | Delim;
 
 const OPEN: Record<PulpMarkName, string> = {
   bold: '**', italic: '*', strike: '~~', underline: '[', smallCaps: '[', subscript: '~', superscript: '^',
@@ -23,7 +23,7 @@ const CLOSE: Record<PulpMarkName, string> = {
   bold: '**', italic: '*', strike: '~~', underline: ']{.underline}', smallCaps: ']{.smallcaps}',
   subscript: '~', superscript: '^',
 };
-const FAMILY: Partial<Record<PulpMarkName, 'star' | 'tilde'>> = { bold: 'star', italic: 'star', strike: 'tilde' };
+const FAMILY: Partial<Record<PulpMarkName, Family>> = { bold: 'star', italic: 'star', strike: 'tilde' };
 
 /** §5(a): always backslash-escaped. */
 const ALWAYS_ESCAPED = new Set('\\`*_[]{}<>~^$@|&#');
@@ -53,9 +53,15 @@ interface Line {
 function inlinePieces(children: PulpNode[]): Line[] {
   const lines: Line[] = [{ pieces: [], hardBreak: false }];
   const stack: PulpMarkName[] = [];
+  const openers: Piece[] = [];
   let cur = lines[0].pieces;
   const closeWhile = (keep: (m: PulpMarkName) => boolean): void => {
-    while (stack.length > 0 && !stack.every(keep)) cur.push(delimPiece(stack.pop()!, false));
+    while (stack.length > 0 && !stack.every(keep)) {
+      const closer = delimPiece(stack.pop()!, false);
+      const opener = openers.pop()!;
+      if (opener.kind === 'delim' && closer.kind === 'delim') opener.partner = closer;
+      cur.push(closer);
+    }
   };
   for (const child of children) {
     if (child.type === 'hardBreak') {
@@ -69,8 +75,10 @@ function inlinePieces(children: PulpNode[]): Line[] {
     closeWhile((m) => marks.has(m));
     for (const m of MARK_ORDER) {
       if (marks.has(m) && !stack.includes(m)) {
+        const opener = delimPiece(m, true);
         stack.push(m);
-        cur.push(delimPiece(m, true));
+        openers.push(opener);
+        cur.push(opener);
       }
     }
     const subSup = marks.has('subscript') || marks.has('superscript');
@@ -123,33 +131,57 @@ const ws = (c: number | null): boolean => c === null || isWhiteSpace(c);
 const punct = (c: number | null): boolean =>
   c !== null && (isMdAsciiPunct(c) || isPunctChar(String.fromCodePoint(c)));
 
+/** Maximal runs of adjacent delimiters of one family: [start, end, delimiters]. */
+function delimRuns(ps: Piece[]): [number, number, Delim[]][] {
+  const runs: [number, number, Delim[]][] = [];
+  let i = 0;
+  while (i < ps.length) {
+    const first = ps[i];
+    if (first.kind !== 'delim') {
+      i++;
+      continue;
+    }
+    const run: Delim[] = [first];
+    let end = i;
+    for (let nx = ps[end + 1]; nx?.kind === 'delim' && nx.family === first.family; nx = ps[end + 1]) {
+      run.push(nx);
+      end++;
+    }
+    runs.push([i, end, run]);
+    i = end + 1;
+  }
+  return runs;
+}
+
+/** A `*` run that both closes and opens marks writes the opening part, and its closers, with `_`. */
+function applyUnderscores(ps: Piece[]): void {
+  for (const [, , run] of delimRuns(ps)) {
+    if (run[0].family !== 'star' || !run.some((d) => d.opens) || !run.some((d) => !d.opens)) continue;
+    for (const d of run) {
+      if (!d.opens) continue;
+      for (const x of [d, d.partner!]) {
+        x.family = 'under';
+        x.text = x.text.replace(/\*/g, '_');
+      }
+    }
+  }
+}
+
 /** §5(e): rewrites a literal neighbour as `&#N;` where a run would not open or close. */
 function applyFlanking(line: Line): void {
   const ps = line.pieces;
   let changed = true;
   while (changed) {
     changed = false;
-    let i = 0;
-    while (i < ps.length) {
-      const first = ps[i];
-      if (first.kind !== 'delim') {
-        i++;
-        continue;
-      }
-      let end = i;
-      let opens = first.opens;
-      let closes = !first.opens;
-      while (end + 1 < ps.length) {
-        const nx = ps[end + 1];
-        if (nx.kind !== 'delim' || nx.family !== first.family) break;
-        end++;
-        if (nx.opens) opens = true;
-        else closes = true;
-      }
+    for (const [i, end, run] of delimRuns(ps)) {
       const prev = edgeChar(ps[i - 1], 'last');
       const next = end + 1 < ps.length ? edgeChar(ps[end + 1], 'first') : line.hardBreak ? 0x5c : null;
       const left = !ws(next) && (!punct(next) || ws(prev) || punct(prev));
       const right = !ws(prev) && (!punct(prev) || ws(next) || punct(next));
+      // `_` has CommonMark's stricter intraword rules (§6.2).
+      const under = run[0].family === 'under';
+      const canOpen = left && (!under || !right || punct(prev));
+      const canClose = right && (!under || !left || punct(next));
       const rewrite = (j: number): void => {
         const p = ps[j];
         if (p !== undefined && p.kind === 'lit' && !p.ent) {
@@ -157,9 +189,8 @@ function applyFlanking(line: Line): void {
           changed = true;
         }
       };
-      if (closes && !right) rewrite(end + 1);
-      if (opens && !left) rewrite(i - 1);
-      i = end + 1;
+      if (run.some((d) => !d.opens) && !canClose) rewrite(end + 1);
+      if (run.some((d) => d.opens) && !canOpen) rewrite(i - 1);
     }
   }
 }
@@ -168,6 +199,7 @@ function applyFlanking(line: Line): void {
 function inlineLines(node: PulpNode): string[] {
   return inlinePieces(node.content ?? []).map((line) => {
     applyLineEdges(line.pieces);
+    applyUnderscores(line.pieces);
     applyFlanking(line);
     return line.pieces.map(pieceText).join('') + (line.hardBreak ? '\\' : '');
   });

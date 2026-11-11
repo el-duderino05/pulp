@@ -35,4 +35,6 @@ export const CANONICAL_CASES: { name: string; doc: PulpDoc; md: string }[] = [
   { name: 'raw block', doc: doc(p(t('Intro.')), raw('| a | b |\n|---|---|'), p(t('End.'))), md: 'Intro.\n\n| a | b |\n|---|---|\n\nEnd.\n' },
   { name: 'non-Latin text', doc: doc(h(1, t('Capítulo 1 — A Chegada')), p(t('Ελληνικά, 中文, العربية, 😀👍🏽'))),
     md: '# Capítulo 1 — A Chegada\n\nΕλληνικά, 中文, العربية, 😀👍🏽\n' },
+  { name: 'mark reopened after a closing run', doc: doc(p(t('a', 'bold'), t('b', 'bold', 'italic'), t('c', 'italic'))), md: '**a*b***_c_\n' },
+  { name: 'mark reopened after a closing run, mirrored', doc: doc(p(t('a', 'italic'), t('b', 'bold', 'italic'), t('c', 'bold'))), md: '*a**b***__c__\n' },
 ];

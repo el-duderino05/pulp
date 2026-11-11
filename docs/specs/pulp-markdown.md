@@ -104,6 +104,12 @@ x^a\.b^ and H~2\-3~O
 **word,**&#110;ext
 ```
 
+When one run of `*` would both close some formatting and open other formatting, the opening part is written with `_` or `__` instead, and closed the same way, because a run like `****` is read wrongly. These `_` delimiters follow CommonMark's stricter `_` rules and are repaired the same way (`_c_&#100;`).
+
+```markdown
+**a*b***_c_
+```
+
 ## 6. Paragraph details
 
 - An empty paragraph is written `&nbsp;`. A paragraph whose source is exactly `&nbsp;` reads back as empty, while a real no-break space character stays a character.
