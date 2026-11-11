@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import { parseBody } from './parse';
 import { serializeBody } from './serialize';
-import { doc, h, p, t, raw } from './test-builders';
+import { doc, h, p, t, raw, ul, li } from './test-builders';
 
 const kept = (md: string) => expect(serializeBody(parseBody(md))).toBe(md);
 
@@ -94,6 +94,14 @@ describe('content Pulp does not understand', () => {
       doc(p(t('A')), raw('B\n[a]: https://example.org')),
     );
     kept('A\n\nB\n[a]: https://example.org\n');
+  });
+
+  test('a protected star list right after an editable bullet list keeps its text (§10, R13)', () => {
+    // §10: the protected list is exactly how Pulp writes a second list, so it may read back
+    // as editable or merge with the list before it. Only its text is promised.
+    const md = serializeBody(doc(ul(li(p())), raw('* bowls\n* jars\n* a single lamp'), p()));
+    expect(md).toBe('- &nbsp;\n\n* bowls\n* jars\n* a single lamp\n\n&nbsp;\n');
+    expect(serializeBody(parseBody(md))).toBe(md);
   });
 
   test('a line holding only U+00A0 is not blank', () => {
