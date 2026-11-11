@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import { parseBody } from './parse';
 import { serializeBody } from './serialize';
-import { doc, p, t, raw } from './test-builders';
+import { doc, h, p, t, raw } from './test-builders';
 
 const kept = (md: string) => expect(serializeBody(parseBody(md))).toBe(md);
 
@@ -59,5 +59,55 @@ describe('content Pulp does not understand', () => {
 
   test('only blank lines between blocks change', () => {
     expect(serializeBody(parseBody('\n\nA\n\n\n\n| t |\n|---|\n\n\nB'))).toBe('A\n\n| t |\n|---|\n\nB\n');
+  });
+
+  test.each([
+    ['empty item, then two blank lines, then a list', '-\n\n\n- a\n'],
+    ['ordered list ending in an empty item', '1. a\n2.\n\n\n3. c\n'],
+    ['star list with an empty item', '*\n\n\n* a\n'],
+    ['fusing lists between paragraphs', 'x\n\n-\n\n\n- a\n\nz\n'],
+  ])('blocks that would run together are kept as one: %s', (_name, md) => {
+    kept(md);
+    const d = parseBody(md);
+    expect(parseBody(serializeBody(d))).toEqual(d);
+  });
+
+  test('blocks that would run together: the merged block holds the blank lines', () => {
+    expect(parseBody('-\n\n\n- a\n')).toEqual(doc(raw('-\n\n\n- a')));
+    expect(parseBody('x\n\n-\n\n\n- a\n\nz\n')).toEqual(doc(p(t('x')), raw('-\n\n\n- a'), p(t('z'))));
+  });
+
+  test('blocks that would run together: CRLF random find reads back the same', () => {
+    const s = '\tcode\r\n-\r\n\r\r\n-\r\n-\r\n_i_\r\n~~~';
+    const d = parseBody(s);
+    expect(parseBody(serializeBody(d))).toEqual(d);
+  });
+
+  test('a chain of uncovered run, block and uncovered run is one raw block', () => {
+    const md = '[a]: /x\n```\nc\n```\n[b]: /y\n\nP\n';
+    expect(parseBody(md)).toEqual(doc(raw('[a]: /x\n```\nc\n```\n[b]: /y'), p(t('P'))));
+    kept(md);
+  });
+
+  test('an uncovered run at the end of the body merges with the block it touches', () => {
+    expect(parseBody('A\n\nB\n[a]: https://example.org')).toEqual(
+      doc(p(t('A')), raw('B\n[a]: https://example.org')),
+    );
+    kept('A\n\nB\n[a]: https://example.org\n');
+  });
+
+  test('a line holding only U+00A0 is not blank', () => {
+    expect(parseBody('A\n \nB\n')).toEqual(doc(raw('A\n \nB')));
+    kept('A\n \nB\n');
+  });
+
+  test('CRLF input is read as LF', () => {
+    expect(serializeBody(parseBody('A\r\n\r\nB\r\n'))).toBe('A\n\nB\n');
+    expect(parseBody('line one\r\nline two\r\n')).toEqual(doc(raw('line one\nline two')));
+  });
+
+  test('two touching editable blocks get one blank line between them', () => {
+    expect(parseBody('# H\nText\n')).toEqual(doc(h(1, t('H')), p(t('Text'))));
+    expect(serializeBody(parseBody('# H\nText\n'))).toBe('# H\n\nText\n');
   });
 });

@@ -289,19 +289,56 @@ export function parseBody(markdown: string): PulpDoc {
   const src = prepareSource(markdown);
   const lines = src.split('\n');
   const items = pieces(src, lines);
-  const makeRaw = (it: Piece): boolean => {
-    if (it.node.type === 'rawBlock') return false;
-    it.node = rawBlock(it.slice);
-    return true;
-  };
+  exactOrRaw(items);
+  // Every piece is now written exactly as its slice, so whether two neighbours run together
+  // depends only on their slices. Merging never changes another piece's slice, so one pass
+  // (re-checking the pairs around each merge) finds every fusing pair.
+  if (fuseNeighbours(items, lines)) exactOrRaw(items);
+  // Raw blocks keep their source slice: normalizeDoc copies a raw block's text unchanged.
+  return normalizeDoc({ type: 'doc', content: items.map((it) => it.node) });
+}
+
+/** Makes raw every editable piece not written back exactly as its slice, until nothing changes. */
+function exactOrRaw(items: Piece[]): void {
   for (let changed = true; changed; ) {
     changed = false;
     const written = serializeBlocks({ type: 'doc', content: items.map((it) => it.node) });
     items.forEach((it, idx) => {
       // `written` is empty when the document reads as one empty paragraph (an `&nbsp;` body).
-      if ((written.length === 0 || written[idx] !== it.slice) && makeRaw(it)) changed = true;
+      if (it.node.type !== 'rawBlock' && (written.length === 0 || written[idx] !== it.slice)) {
+        it.node = rawBlock(it.slice);
+        changed = true;
+      }
     });
   }
-  // Raw blocks keep their source slice: normalizeDoc copies a raw block's text unchanged.
-  return normalizeDoc({ type: 'doc', content: items.map((it) => it.node) });
+}
+
+/** Whether `a` and `b`, written with one blank line between, are read as one top-level block. */
+function runTogether(a: string, b: string): boolean {
+  const bStart = a.split('\n').length + 1;
+  return topLevelBlocks(md.parse(`${a}\n\n${b}`, {})).some((blk) => blk.map[0] < bStart && blk.map[1] > bStart);
+}
+
+/**
+ * Merges neighbouring pieces that would run together once the blank lines between them are
+ * tidied into one raw piece holding the exact source lines, blank lines included.
+ * Returns whether anything merged.
+ */
+function fuseNeighbours(items: Piece[], lines: readonly string[]): boolean {
+  let merged = false;
+  let i = 0;
+  while (i + 1 < items.length) {
+    const a = items[i];
+    const b = items[i + 1];
+    if (!runTogether(a.slice, b.slice)) {
+      i++;
+      continue;
+    }
+    const slice = lines.slice(a.start, b.end).join('\n');
+    items.splice(i, 2, { ...a, end: b.end, slice, node: rawBlock(slice), endsUncovered: b.endsUncovered });
+    merged = true;
+    // The merged piece may now run together with its left neighbour too.
+    if (i > 0) i--;
+  }
+  return merged;
 }
