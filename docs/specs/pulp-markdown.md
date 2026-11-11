@@ -23,7 +23,7 @@ The YAML header is defined in the M1a spec (§3.2) and handled by the core. This
   - superscript `^x^`
   - bracketed spans with exactly the classes `.underline` or `.smallcaps`
 - The reference implementation is markdown-it 15 with markdown-it-sub, markdown-it-sup and Pulp's span rule.
-- Pulp always writes bodies that CommonMark and Pandoc read the same way. For files Pulp did not write, where the two disagree, Pulp follows CommonMark.
+- Pulp writes bodies that CommonMark and Pandoc read the same way, with one exception: Pandoc may join two adjacent bulleted lists that Pulp keeps separate with `-` and `*`, while numbered lists (`1.` and `1)`) stay separate in Pandoc too. For files Pulp did not write, where the two disagree, Pulp follows CommonMark.
 
 One example of each extension:
 
@@ -79,11 +79,18 @@ A literal character is written as follows.
 
 - `-`, `+`, `=` and `:` are backslash-escaped.
 - If the line starts with 1–9 digits followed by `.` or `)`, that `.` or `)` is escaped.
+- So that Pandoc doesn't read a list either, a line that starts like one of Pandoc's lettered or roman-numeral list markers is escaped too: the `.` or `)` after a single ASCII letter or a run of roman-numeral letters (`i v x l c d m`, either case), and the `(` of `(x)`, where x is 1–9 digits, one ASCII letter or a roman-numeral run. This applies only when a space, a tab or the end of the line follows.
 
 ```markdown
 \- not a bullet
 
 1\. not a list
+
+a\) the first option
+
+iv\. Introduction
+
+\(1) First
 ```
 
 **(c) Space or tab at the edge of a line.** A space or tab that is the first or last character of a line is written `&#32;` or `&#9;`.

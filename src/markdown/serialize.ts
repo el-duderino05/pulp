@@ -105,20 +105,50 @@ function inlinePieces(children: PulpNode[]): Line[] {
 const isLit = (p: Piece | undefined, test: (ch: string) => boolean): p is Piece & { kind: 'lit' } =>
   p !== undefined && p.kind === 'lit' && !p.ent && test(p.ch);
 
+const isBlank = (ch: string): boolean => ch === ' ' || ch === '\t';
+const isDigit = (ch: string): boolean => ch >= '0' && ch <= '9';
+const isLetter = (ch: string): boolean => /^[A-Za-z]$/.test(ch);
+const isRoman = (ch: string): boolean => /^[ivxlcdmIVXLCDM]$/.test(ch);
+
+/** How many literal pieces from `at` make a Pandoc list label: a single ASCII letter or a roman-numeral run. */
+function letterLabel(pieces: Piece[], at: number): number {
+  let n = 0;
+  while (isLit(pieces[at + n], isLetter)) n++;
+  if (n === 1) return 1;
+  for (let k = 0; k < n; k++) if (!isLit(pieces[at + k], isRoman)) return 0;
+  return n;
+}
+
+/** Whether the piece after a list label is a space, a tab or the end of the line. */
+const endsLabel = (p: Piece | undefined): boolean => p === undefined || isLit(p, isBlank);
+
 /** §5(b) and §5(c): escapes at the start of a line and spaces or tabs at its edges. */
 function applyLineEdges(pieces: Piece[]): void {
   const first = pieces[0];
+  const escape = (i: number): void => {
+    pieces[i] = { kind: 'fixed', text: `\\${pieceText(pieces[i])}` };
+  };
   if (isLit(first, (ch) => LINE_START_ESCAPED.has(ch))) {
-    pieces[0] = { kind: 'fixed', text: `\\${first.ch}` };
+    escape(0);
   } else {
     let n = 0;
-    while (isLit(pieces[n], (ch) => ch >= '0' && ch <= '9')) n++;
-    const after = pieces[n];
-    if (n >= 1 && n <= 9 && isLit(after, (ch) => ch === '.' || ch === ')')) {
-      pieces[n] = { kind: 'fixed', text: `\\${after.ch}` };
+    while (isLit(pieces[n], isDigit)) n++;
+    const isClose = (ch: string): boolean => ch === '.' || ch === ')';
+    if (n >= 1 && n <= 9 && isLit(pieces[n], isClose)) {
+      escape(n);
+    } else if (n === 0) {
+      // R16: Pandoc's fancy_lists read `a)`, `iv.` and `(1)` / `(a)` / `(iv)` as list markers.
+      const letters = letterLabel(pieces, 0);
+      if (letters > 0 && isLit(pieces[letters], isClose) && endsLabel(pieces[letters + 1])) {
+        escape(letters);
+      } else if (isLit(first, (ch) => ch === '(')) {
+        let digits = 0;
+        while (isLit(pieces[1 + digits], isDigit)) digits++;
+        const label = digits >= 1 && digits <= 9 ? digits : digits === 0 ? letterLabel(pieces, 1) : 0;
+        if (label > 0 && isLit(pieces[1 + label], (ch) => ch === ')') && endsLabel(pieces[2 + label])) escape(0);
+      }
     }
   }
-  const isBlank = (ch: string): boolean => ch === ' ' || ch === '\t';
   for (const i of [0, pieces.length - 1]) {
     const p = pieces[i];
     if (isLit(p, isBlank)) pieces[i] = { kind: 'fixed', text: entity(p.ch) };
