@@ -43,6 +43,15 @@ describe('content Pulp does not understand', () => {
     kept('Text [a].\n\n[a]: https://example.org\n');
   });
 
+  test('lines outside any block stay together with a block they touch', () => {
+    kept('[^1]: The note.\n    continued here.\n');
+    expect(parseBody('[^1]: The note.\n    continued here.\n').content!.length).toBe(1);
+    expect(parseBody('[a]: https://example.org\nText.\n')).toEqual(doc(raw('[a]: https://example.org\nText.')));
+    kept('[a]: https://example.org\nText.\n');
+    expect(parseBody('Text.\n[a]: https://example.org\n')).toEqual(doc(raw('Text.\n[a]: https://example.org')));
+    kept('Text.\n[a]: https://example.org\n');
+  });
+
   test('a block that becomes raw can change its neighbour (repeat until stable)', () => {
     expect(parseBody('- _x_\n\n* b\n')).toEqual(doc(raw('- _x_'), raw('* b')));
     kept('- _x_\n\n* b\n');

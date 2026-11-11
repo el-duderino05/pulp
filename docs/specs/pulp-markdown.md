@@ -191,6 +191,7 @@ An ordered list that starts at 9. Item 10 has two paragraphs, so the list is loo
 
 - A top-level block becomes editable only if Pulp would write it back exactly as it is in the file. Otherwise it is kept as a protected raw block, byte for byte.
 - Lines that belong to no block become raw blocks too. Example: link reference definitions.
+- Lines that belong to no block are kept together with a block they touch (with no blank line between), as one protected block.
 - Blank lines between blocks are written as exactly one.
 - Example: a table, a code block, `_italic_` and a hard-wrapped paragraph each stay as written.
 - Two protected blocks that end up next to each other (for example, after the paragraph between them is deleted) may be read back as one protected block. Their text is unchanged.

@@ -220,24 +220,38 @@ const rawBlock = (markdown: string): PulpNode => ({ type: 'rawBlock', attrs: { m
 
 /** One top-level piece of the body: where it starts, its source text and its tentative node. */
 interface Piece {
+  /** Source lines `[start, end)`; the last one is non-blank. */
   start: number;
+  end: number;
   slice: string;
   node: PulpNode;
+  /** Whether the piece starts / ends with lines that no top-level token covers. */
+  startsUncovered: boolean;
+  endsUncovered: boolean;
 }
 
 /**
  * The body's top-level pieces in source order: each top-level token, plus each run of
  * consecutive non-blank lines that no top-level token covers (for example link reference
- * definitions), which is raw.
+ * definitions), which is raw. A run with no blank line between it and a neighbouring piece
+ * is merged with it into one raw piece, so no blank line is ever added inside text that
+ * was contiguous in the file.
  */
 function pieces(src: string, lines: readonly string[]): Piece[] {
-  const out: Piece[] = [];
+  const found: Piece[] = [];
   const covered = new Array<boolean>(lines.length).fill(false);
   for (const block of topLevelBlocks(md.parse(src, {}))) {
     for (let l = block.map[0]; l < block.map[1]; l++) covered[l] = true;
     const slice = sourceSlice(lines, block.map);
     if (slice === '') continue;
-    out.push({ start: block.map[0], slice, node: convertTopBlock(block) ?? rawBlock(slice) });
+    found.push({
+      start: block.map[0],
+      end: block.map[0] + slice.split('\n').length,
+      slice,
+      node: convertTopBlock(block) ?? rawBlock(slice),
+      startsUncovered: false,
+      endsUncovered: false,
+    });
   }
   let l = 0;
   while (l < lines.length) {
@@ -248,9 +262,20 @@ function pieces(src: string, lines: readonly string[]): Piece[] {
     const start = l;
     while (l < lines.length && !covered[l] && !isBlank(lines[l])) l++;
     const slice = lines.slice(start, l).join('\n');
-    out.push({ start, slice, node: rawBlock(slice) });
+    found.push({ start, end: l, slice, node: rawBlock(slice), startsUncovered: true, endsUncovered: true });
   }
-  return out.sort((a, b) => a.start - b.start);
+  found.sort((a, b) => a.start - b.start);
+  const out: Piece[] = [];
+  for (const piece of found) {
+    const prev = out[out.length - 1];
+    if (prev && prev.end === piece.start && (prev.endsUncovered || piece.startsUncovered)) {
+      const slice = lines.slice(prev.start, piece.end).join('\n');
+      out[out.length - 1] = { ...prev, end: piece.end, slice, node: rawBlock(slice), endsUncovered: piece.endsUncovered };
+    } else {
+      out.push(piece);
+    }
+  }
+  return out;
 }
 
 /**
