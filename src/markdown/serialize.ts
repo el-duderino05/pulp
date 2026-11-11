@@ -13,7 +13,7 @@ const { isPunctChar, isMdAsciiPunct, isWhiteSpace } = new MarkdownIt().utils;
  *   An opener links to its closer (`partner`) so both can switch from `*` to `_`.
  */
 type Family = 'star' | 'under' | 'tilde';
-type Delim = { kind: 'delim'; text: string; family: Family; opens: boolean; partner?: Delim };
+type Delim = { kind: 'delim'; text: string; family: Family; opens: boolean; partner?: Delim; swapped?: boolean };
 type Piece = { kind: 'lit'; ch: string; ent: boolean } | { kind: 'fixed'; text: string } | Delim;
 
 const OPEN: Record<PulpMarkName, string> = {
@@ -55,8 +55,8 @@ function inlinePieces(children: PulpNode[]): Line[] {
   const stack: PulpMarkName[] = [];
   const openers: Piece[] = [];
   let cur = lines[0].pieces;
-  const closeWhile = (keep: (m: PulpMarkName) => boolean): void => {
-    while (stack.length > 0 && !stack.every(keep)) {
+  const closeWhile = (cond: () => boolean): void => {
+    while (stack.length > 0 && cond()) {
       const closer = delimPiece(stack.pop()!, false);
       const opener = openers.pop()!;
       if (opener.kind === 'delim' && closer.kind === 'delim') opener.partner = closer;
@@ -65,14 +65,19 @@ function inlinePieces(children: PulpNode[]): Line[] {
   };
   for (const child of children) {
     if (child.type === 'hardBreak') {
-      closeWhile(() => false);
+      closeWhile(() => true);
       lines[lines.length - 1].hardBreak = true;
       lines.push({ pieces: [], hardBreak: false });
       cur = lines[lines.length - 1].pieces;
       continue;
     }
     const marks = new Set((child.marks ?? []).map((m) => m.type));
-    closeWhile((m) => marks.has(m));
+    // Close until every open mark is kept and nothing to open sorts before the top (§4 nesting).
+    const rank = (m: PulpMarkName): number => MARK_ORDER.indexOf(m);
+    closeWhile(() => {
+      const top = stack[stack.length - 1];
+      return !stack.every((m) => marks.has(m)) || [...marks].some((m) => !stack.includes(m) && rank(m) < rank(top));
+    });
     for (const m of MARK_ORDER) {
       if (marks.has(m) && !stack.includes(m)) {
         const opener = delimPiece(m, true);
@@ -93,7 +98,7 @@ function inlinePieces(children: PulpNode[]): Line[] {
       }
     }
   }
-  closeWhile(() => false);
+  closeWhile(() => true);
   return lines;
 }
 
@@ -157,13 +162,16 @@ function delimRuns(ps: Piece[]): [number, number, Delim[]][] {
 function applyUnderscores(ps: Piece[]): void {
   for (const [, , run] of delimRuns(ps)) {
     if (run[0].family !== 'star' || !run.some((d) => d.opens) || !run.some((d) => !d.opens)) continue;
-    for (const d of run) {
-      if (!d.opens) continue;
-      for (const x of [d, d.partner!]) {
-        x.family = 'under';
-        x.text = x.text.replace(/\*/g, '_');
-      }
-    }
+    for (const d of run) if (d.opens) swapFamily(d);
+  }
+}
+
+/** Switches an emphasis opener and its closer between `*` and `_`. */
+function swapFamily(d: Delim): void {
+  for (const x of [d, d.partner!]) {
+    x.swapped = true;
+    x.family = x.family === 'star' ? 'under' : 'star';
+    x.text = x.family === 'star' ? x.text.replace(/_/g, '*') : x.text.replace(/\*/g, '_');
   }
 }
 
@@ -173,7 +181,14 @@ function applyFlanking(line: Line): void {
   let changed = true;
   while (changed) {
     changed = false;
-    for (const [i, end, run] of delimRuns(ps)) {
+    const runs = delimRuns(ps);
+    const runLength = new Map<Delim, number>();
+    for (const [, , run] of runs) {
+      const len = run.reduce((n, d) => n + d.text.length, 0);
+      for (const d of run) runLength.set(d, len);
+    }
+    const open: Delim[] = [];
+    for (const [i, end, run] of runs) {
       const prev = edgeChar(ps[i - 1], 'last');
       const next = end + 1 < ps.length ? edgeChar(ps[end + 1], 'first') : line.hardBreak ? 0x5c : null;
       const left = !ws(next) && (!punct(next) || ws(prev) || punct(prev));
@@ -189,8 +204,27 @@ function applyFlanking(line: Line): void {
           changed = true;
         }
       };
-      if (run.some((d) => !d.opens) && !canClose) rewrite(end + 1);
-      if (run.some((d) => d.opens) && !canOpen) rewrite(i - 1);
+      for (const d of run) if (!d.opens) open.splice(open.findIndex((o) => o.partner === d), 1);
+      // CommonMark §6.2: an opening run that can also close would close the other emphasis mark
+      // still open with the same character, unless the rule of 3 stops it. Switch its character.
+      const family = run[0].family;
+      const outer = family === 'tilde' ? undefined : open.find((o) => o.family === family);
+      if (outer && canClose && run.every((d) => d.opens && !d.swapped)) {
+        const lo = runLength.get(outer)!;
+        const lr = runLength.get(run[0])!;
+        const ruleOf3 = (lo + lr) % 3 === 0 && !(lo % 3 === 0 && lr % 3 === 0);
+        const other: Family = family === 'star' ? 'under' : 'star';
+        const touches = [ps[i - 1], ps[end + 1]].some((p) => p?.kind === 'delim' && p.family === other);
+        if (!ruleOf3 && !touches) {
+          for (const d of run) swapFamily(d);
+          changed = true;
+          break;
+        }
+      }
+      open.push(...run.filter((d) => d.opens));
+      // A run that fails on whitespace inside it rewrites that whitespace; otherwise the character outside.
+      if (run.some((d) => !d.opens) && !canClose) rewrite(ws(prev) ? i - 1 : end + 1);
+      if (run.some((d) => d.opens) && !canOpen) rewrite(ws(next) ? end + 1 : i - 1);
     }
   }
 }

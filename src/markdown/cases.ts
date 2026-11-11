@@ -36,5 +36,12 @@ export const CANONICAL_CASES: { name: string; doc: PulpDoc; md: string }[] = [
   { name: 'non-Latin text', doc: doc(h(1, t('Capítulo 1 — A Chegada')), p(t('Ελληνικά, 中文, العربية, 😀👍🏽'))),
     md: '# Capítulo 1 — A Chegada\n\nΕλληνικά, 中文, العربية, 😀👍🏽\n' },
   { name: 'mark reopened after a closing run', doc: doc(p(t('a', 'bold'), t('b', 'bold', 'italic'), t('c', 'italic'))), md: '**a*b***_c_\n' },
-  { name: 'mark reopened after a closing run, mirrored', doc: doc(p(t('a', 'italic'), t('b', 'bold', 'italic'), t('c', 'bold'))), md: '*a**b***__c__\n' },
+  { name: 'mark reopened after a closing run, mirrored', doc: doc(p(t('a', 'italic'), t('b', 'bold', 'italic'), t('c', 'bold'))), md: '*a*___b_&#99;__\n' },
+  { name: 'reopened mark starting with a space', doc: doc(p(t('foo', 'bold', 'italic'), t(' bar', 'italic'))), md: '***foo***_&#32;bar_\n' },
+  { name: 'strike reopened starting with a space', doc: doc(p(t('foo', 'bold', 'strike'), t(' bar', 'strike'))), md: '**~~foo~~**~~&#32;bar~~\n' },
+  { name: 'mark opened inside superscript', doc: doc(p(t('x'), t('2', 'superscript'), t('3', 'bold', 'superscript'))), md: 'x^2^**^3^**\n' },
+  { name: 'mark closed before a space', doc: doc(p(t('foo ', 'italic'), t('bar', 'bold', 'italic'))), md: '*foo&#32;*___bar___\n' },
+  { name: 'reopened mark switches character', doc: doc(p(t('a', 'bold', 'italic', 'strike'), t('1', 'bold', 'strike'), t('-', 'bold', 'italic', 'strike'))),
+    md: '***~~a~~*~~1~~_~~-~~_**\n' },
+  { name: 'mark opened inside underline', doc: doc(p(t('a', 'underline'), t('b', 'underline', 'bold'))), md: '[a]{.underline}**[b]{.underline}**\n' },
 ];

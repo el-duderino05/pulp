@@ -110,6 +110,18 @@ When one run of `*` would both close some formatting and open other formatting, 
 **a*b***_c_
 ```
 
+When the character just inside the run is a space or other whitespace (formatting that is reopened or closed mid-phrase), that whitespace is written as a character reference instead.
+
+```markdown
+***foo***_&#32;bar_
+```
+
+When reopened formatting would be read as closing the other of bold and italic that is still open with the same character, it is written with the other character (`*` or `_`) instead.
+
+```markdown
+***~~a~~*~~1~~_~~-~~_**
+```
+
 ## 6. Paragraph details
 
 - An empty paragraph is written `&nbsp;`. A paragraph whose source is exactly `&nbsp;` reads back as empty, while a real no-break space character stays a character.
