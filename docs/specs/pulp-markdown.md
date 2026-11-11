@@ -237,6 +237,7 @@ For each rule, what the editor has and what is saved (or read back):
 - Files written in another style are kept but not editable. This includes `_italic_`, `*` bullets and hard-wrapped lines; editing them arrives with "New project from folder" in 1b.
 - Pandoc collapses runs of spaces when publishing; Pulp's own files keep them.
 - A list placed directly after a protected list with the same marker is read back as part of that protected block. Its text is kept, but it is no longer editable.
+- The other way round: a protected list placed directly after an editable list of the same kind may be read back as editable, or may merge with it into one protected block. Its text is unchanged.
 
 One example for each limit, in the same order:
 
@@ -257,6 +258,15 @@ two  spaces here (Pandoc publishes one; Pulp keeps both)
 ```
 
 The last two lists use the same marker and sit next to each other, so they read back as one protected block. All their text is kept.
+
+The other way round: an editable list, then a protected list written with `*`. Pulp writes a second list exactly like that, so the protected list reads back as an editable list. Its text is unchanged:
+
+```markdown
+- an editable list
+
+* an old list, protected
+* with a star marker
+```
 
 ## 11. Examples
 
