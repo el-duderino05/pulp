@@ -14,6 +14,8 @@ const ASCII_PUNCT = [...'!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'];
 const ASCII_ALNUM = [...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'];
 const SPECIAL = [' ', 'é', 'é', 'ß', '中', '😀', '👍🏽', '‍', '\n'];
 const ENTITY_STRINGS = ['&amp;', '&#32;', '&nbsp;'];
+/** Unicode whitespace and punctuation, which count for CommonMark's flanking rules. */
+const UNICODE_WS_PUNCT = ['　', ' ', ' ', '“', '”', '«', '»', '—', '…', '¿', '¡'];
 
 /** One piece of text from the weighted alphabet. */
 const arbChar: fc.Arbitrary<string> = fc.oneof(
@@ -21,6 +23,7 @@ const arbChar: fc.Arbitrary<string> = fc.oneof(
   { weight: 4, arbitrary: fc.constantFrom(' ', '\t') },
   { weight: 5, arbitrary: fc.constantFrom(...ASCII_PUNCT) },
   { weight: 2, arbitrary: fc.constantFrom(...SPECIAL) },
+  { weight: 2, arbitrary: fc.constantFrom(...UNICODE_WS_PUNCT) },
   { weight: 1, arbitrary: fc.constantFrom(...ENTITY_STRINGS) },
 );
 

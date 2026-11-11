@@ -15,6 +15,11 @@ const RUNS = { numRuns: 1000 };
 const SLOW = { timeout: 120_000 };
 
 describe('fixtures', () => {
+  test('the five fixtures are all there', () => {
+    expect(readdirSync(dir).filter((f) => f.endsWith('.md')).sort()).toEqual(
+      ['chapter.md', 'escapes.md', 'foreign.md', 'lists.md', 'scripts.md'],
+    );
+  });
   test.each(readdirSync(dir).filter((f) => f.endsWith('.md')))('%s reads and writes back byte for byte', (f) => {
     const md = read(f);
     expect(serializeBody(parseBody(md))).toBe(md);
