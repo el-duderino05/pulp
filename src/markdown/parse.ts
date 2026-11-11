@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: MPL-2.0
+import MarkdownIt, { type Token } from 'markdown-it';
+import sub from 'markdown-it-sub';
+import sup from 'markdown-it-sup';
+import { pulpSpans } from './spans';
+import { checkDoc } from './schema';
+import { normalizeDoc } from './normalize';
+import type { PulpDoc, PulpMarkName, PulpNode } from './model';
+
+const md = new MarkdownIt({ html: true, linkify: false, typographer: false })
+  .use(sub)
+  .use(sup)
+  .use(pulpSpans);
+
+/** Thrown while converting a block that holds something Pulp cannot edit. */
+class Unsupported extends Error {}
+
+/** Line endings to `\n`, then Unicode NFC. */
+export function prepareSource(markdown: string): string {
+  return markdown.replace(/\r\n?/g, '\n').normalize('NFC');
+}
+
+/** A top-level block: its tokens and its source lines `[map[0], map[1])`. */
+export interface TopBlock {
+  tokens: Token[];
+  map: [number, number];
+}
+
+/** Splits the token stream into top-level blocks (level-0 tokens with a `map`). */
+export function topLevelBlocks(tokens: Token[]): TopBlock[] {
+  const blocks: TopBlock[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (tok.level !== 0 || !tok.map || tok.nesting < 0) {
+      i++;
+      continue;
+    }
+    let end = i + 1;
+    if (tok.nesting > 0) {
+      let depth = 1;
+      while (end < tokens.length && depth > 0) {
+        depth += tokens[end].nesting;
+        end++;
+      }
+    }
+    blocks.push({ tokens: tokens.slice(i, end), map: [tok.map[0], tok.map[1]] });
+    i = end;
+  }
+  return blocks;
+}
+
+/** The block's source lines, with trailing whitespace-only lines removed. */
+export function sourceSlice(lines: readonly string[], map: [number, number]): string {
+  const slice = lines.slice(map[0], map[1]);
+  while (slice.length > 0 && slice[slice.length - 1].trim() === '') slice.pop();
+  return slice.join('\n');
+}
+
+const MARK_TOKENS = new Map<string, PulpMarkName>([
+  ['strong', 'bold'],
+  ['em', 'italic'],
+  ['s', 'strike'],
+  ['sub', 'subscript'],
+  ['sup', 'superscript'],
+]);
+
+const SPAN_CLASSES = new Map<string, PulpMarkName>([
+  ['underline', 'underline'],
+  ['smallcaps', 'smallCaps'],
+]);
+
+/** The mark of an opening token. Mapped by token type, never by markup (`*` and `_` alike). */
+function markOf(tok: Token, base: string): PulpMarkName {
+  const mark = base === 'span' ? SPAN_CLASSES.get(String(tok.attrGet('class') ?? '')) : MARK_TOKENS.get(base);
+  if (!mark) throw new Unsupported(tok.type);
+  return mark;
+}
+
+/** Converts an `inline` token's children. Marks are a set; `normalizeDoc` fixes their order. */
+function convertInline(children: readonly Token[]): PulpNode[] {
+  const open = new Map<PulpMarkName, number>();
+  const stack: { base: string; mark: PulpMarkName }[] = [];
+  const out: PulpNode[] = [];
+  for (const tok of children) {
+    switch (tok.type) {
+      case 'text':
+      case 'text_special': {
+        if (tok.content === '') break;
+        const node: PulpNode = { type: 'text', text: tok.content };
+        const marks = [...open.keys()].map((type) => ({ type }));
+        if (marks.length > 0) node.marks = marks;
+        out.push(node);
+        break;
+      }
+      case 'hardbreak':
+        out.push({ type: 'hardBreak' });
+        break;
+      default:
+        if (tok.nesting === 1) {
+          const base = tok.type.replace(/_open$/, '');
+          const mark = markOf(tok, base);
+          stack.push({ base, mark });
+          open.set(mark, (open.get(mark) ?? 0) + 1);
+        } else if (tok.nesting === -1) {
+          // A close token carries no class: it closes the latest open token of its type.
+          const base = tok.type.replace(/_close$/, '');
+          let at = stack.length - 1;
+          while (at >= 0 && stack[at].base !== base) at--;
+          if (at < 0) throw new Unsupported(tok.type);
+          const mark = stack.splice(at, 1)[0].mark;
+          const n = (open.get(mark) ?? 0) - 1;
+          if (n > 0) open.set(mark, n);
+          else open.delete(mark);
+        } else {
+          // softbreak, code_inline, html_inline, image and anything else.
+          throw new Unsupported(tok.type);
+        }
+    }
+  }
+  return out;
+}
+
+/** A cursor over one block's tokens. */
+class Cursor {
+  i = 0;
+  constructor(private readonly tokens: readonly Token[]) {}
+  peek(): Token | undefined {
+    return this.tokens[this.i];
+  }
+  next(): Token {
+    const tok = this.tokens[this.i++];
+    if (!tok) throw new Unsupported('unexpected end of block');
+    return tok;
+  }
+  expect(type: string): Token {
+    const tok = this.next();
+    if (tok.type !== type) throw new Unsupported(`expected ${type}, got ${tok.type}`);
+    return tok;
+  }
+}
+
+function withContent(node: PulpNode, content: PulpNode[]): PulpNode {
+  if (content.length > 0) node.content = content;
+  return node;
+}
+
+function inlineContent(cur: Cursor): { children: PulpNode[]; source: string } {
+  const tok = cur.expect('inline');
+  return { children: convertInline(tok.children ?? []), source: tok.content };
+}
+
+/** Converts blocks up to and including the close token `closeType`. */
+function convertBlocksUntil(cur: Cursor, closeType: string): PulpNode[] {
+  const out: PulpNode[] = [];
+  for (;;) {
+    const tok = cur.peek();
+    if (!tok) throw new Unsupported(`missing ${closeType}`);
+    if (tok.type === closeType) {
+      cur.next();
+      return out;
+    }
+    out.push(convertBlock(cur));
+  }
+}
+
+function convertBlock(cur: Cursor): PulpNode {
+  const tok = cur.next();
+  switch (tok.type) {
+    case 'paragraph_open': {
+      const { children, source } = inlineContent(cur);
+      cur.expect('paragraph_close');
+      if (source === '&nbsp;') return { type: 'paragraph' };
+      return withContent({ type: 'paragraph' }, children);
+    }
+    case 'heading_open': {
+      if (!tok.markup.startsWith('#')) throw new Unsupported('setext heading');
+      const level = Number(tok.tag.slice(1));
+      const { children } = inlineContent(cur);
+      cur.expect('heading_close');
+      return withContent({ type: 'heading', attrs: { level } }, children);
+    }
+    case 'blockquote_open':
+      return withContent({ type: 'blockquote' }, convertBlocksUntil(cur, 'blockquote_close'));
+    case 'bullet_list_open':
+      return withContent({ type: 'bulletList' }, convertBlocksUntil(cur, 'bullet_list_close'));
+    case 'ordered_list_open': {
+      const start = Number(tok.attrGet('start') ?? 1);
+      return withContent({ type: 'orderedList', attrs: { start } }, convertBlocksUntil(cur, 'ordered_list_close'));
+    }
+    case 'list_item_open':
+      return withContent({ type: 'listItem' }, convertBlocksUntil(cur, 'list_item_close'));
+    default:
+      throw new Unsupported(tok.type);
+  }
+}
+
+/**
+ * Converts one top-level block to an editor node. Returns `undefined` when the block
+ * holds anything Pulp cannot edit or the result is not valid for the schema.
+ */
+export function convertTopBlock(block: TopBlock): PulpNode | undefined {
+  try {
+    const cur = new Cursor(block.tokens);
+    const node = convertBlock(cur);
+    if (cur.peek()) return undefined;
+    checkDoc({ type: 'doc', content: [node] });
+    return node;
+  } catch (e) {
+    if (e instanceof Unsupported || e instanceof RangeError || e instanceof TypeError) return undefined;
+    throw e;
+  }
+}
+
+/** Parses a Pulp Markdown body into a normalised editor document. */
+export function parseBody(markdown: string): PulpDoc {
+  const src = prepareSource(markdown);
+  const lines = src.split('\n');
+  const content: PulpNode[] = [];
+  for (const block of topLevelBlocks(md.parse(src, {}))) {
+    content.push(
+      convertTopBlock(block) ?? { type: 'rawBlock', attrs: { markdown: sourceSlice(lines, block.map) } },
+    );
+  }
+  return normalizeDoc({ type: 'doc', content });
+}
