@@ -5,6 +5,7 @@ import sup from 'markdown-it-sup';
 import { pulpSpans } from './spans';
 import { checkDoc } from './schema';
 import { normalizeDoc } from './normalize';
+import { serializeBlocks } from './serialize';
 import type { PulpDoc, PulpMarkName, PulpNode } from './model';
 
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false })
@@ -50,10 +51,13 @@ export function topLevelBlocks(tokens: Token[]): TopBlock[] {
   return blocks;
 }
 
-/** The block's source lines, with trailing whitespace-only lines removed. */
+/** A line is blank iff it holds only spaces and tabs. */
+const isBlank = (line: string): boolean => /^[ \t]*$/.test(line);
+
+/** The block's source lines, with trailing blank lines removed. */
 export function sourceSlice(lines: readonly string[], map: [number, number]): string {
   const slice = lines.slice(map[0], map[1]);
-  while (slice.length > 0 && slice[slice.length - 1].trim() === '') slice.pop();
+  while (slice.length > 0 && isBlank(slice[slice.length - 1])) slice.pop();
   return slice.join('\n');
 }
 
@@ -212,15 +216,67 @@ export function convertTopBlock(block: TopBlock): PulpNode | undefined {
   }
 }
 
-/** Parses a Pulp Markdown body into a normalised editor document. */
+const rawBlock = (markdown: string): PulpNode => ({ type: 'rawBlock', attrs: { markdown } });
+
+/** One top-level piece of the body: where it starts, its source text and its tentative node. */
+interface Piece {
+  start: number;
+  slice: string;
+  node: PulpNode;
+}
+
+/**
+ * The body's top-level pieces in source order: each top-level token, plus each run of
+ * consecutive non-blank lines that no top-level token covers (for example link reference
+ * definitions), which is raw.
+ */
+function pieces(src: string, lines: readonly string[]): Piece[] {
+  const out: Piece[] = [];
+  const covered = new Array<boolean>(lines.length).fill(false);
+  for (const block of topLevelBlocks(md.parse(src, {}))) {
+    for (let l = block.map[0]; l < block.map[1]; l++) covered[l] = true;
+    const slice = sourceSlice(lines, block.map);
+    if (slice === '') continue;
+    out.push({ start: block.map[0], slice, node: convertTopBlock(block) ?? rawBlock(slice) });
+  }
+  let l = 0;
+  while (l < lines.length) {
+    if (covered[l] || isBlank(lines[l])) {
+      l++;
+      continue;
+    }
+    const start = l;
+    while (l < lines.length && !covered[l] && !isBlank(lines[l])) l++;
+    const slice = lines.slice(start, l).join('\n');
+    out.push({ start, slice, node: rawBlock(slice) });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Parses a Pulp Markdown body into a normalised editor document. A top-level block is
+ * editable only if writing the document back reproduces its source text exactly; otherwise
+ * it is a raw block holding that text, byte for byte. Making one block raw can change how a
+ * neighbour is written (adjacent lists alternate markers), so this repeats until nothing
+ * changes. A raw block never turns back, so it ends.
+ */
 export function parseBody(markdown: string): PulpDoc {
   const src = prepareSource(markdown);
   const lines = src.split('\n');
-  const content: PulpNode[] = [];
-  for (const block of topLevelBlocks(md.parse(src, {}))) {
-    content.push(
-      convertTopBlock(block) ?? { type: 'rawBlock', attrs: { markdown: sourceSlice(lines, block.map) } },
-    );
+  const items = pieces(src, lines);
+  const makeRaw = (it: Piece): boolean => {
+    if (it.node.type === 'rawBlock') return false;
+    it.node = rawBlock(it.slice);
+    return true;
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    const written = serializeBlocks({ type: 'doc', content: items.map((it) => it.node) });
+    items.forEach((it, idx) => {
+      // `written` is empty when the document reads as one empty paragraph (an `&nbsp;` body).
+      if ((written.length === 0 || written[idx] !== it.slice) && makeRaw(it)) changed = true;
+    });
   }
-  return normalizeDoc({ type: 'doc', content });
+  // Raw blocks keep their source slice: normalizeDoc copies a raw block's text unchanged.
+  return normalizeDoc({ type: 'doc', content: items.map((it) => it.node) });
 }
