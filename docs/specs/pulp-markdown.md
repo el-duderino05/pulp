@@ -105,7 +105,7 @@ iv\. Introduction
 x^a\.b^ and H~2\-3~O
 ```
 
-**(e) Flanking.** If a run of `*` or `~~` delimiters would not be read as opening or closing because of CommonMark's flanking rules (§6.2), the neighbouring literal character outside the run is written as a decimal character reference (`&#110;` for `n`).
+**(e) Flanking.** If a run of `*` or `~~` delimiters would not be read as opening or closing because of the flanking rules in the CommonMark spec, §6.2, the neighbouring literal character outside the run is written as a decimal character reference (`&#110;` for `n`).
 
 ```markdown
 **word,**&#110;ext
@@ -123,7 +123,7 @@ When the character just inside the run is a space or other whitespace (formattin
 ***foo***_&#32;bar_
 ```
 
-When reopened formatting would be read as closing the other of bold and italic that is still open with the same character, it is written with the other character (`*` or `_`) instead.
+When reopened formatting would be read as closing the other of bold and italic that is still open with the same character, it is written with the other character (`*` or `_`) instead. There are two exceptions, where the character stays: when CommonMark's rule of 3 already stops the wrong match, and when the run touches a delimiter of the other character.
 
 ```markdown
 ***~~a~~*~~1~~_~~-~~_**
@@ -147,7 +147,7 @@ A paragraph after an empty one.
 
 ## 7. Lists
 
-- **Markers:** bullet lists use `-`, ordered lists use `N.`. The second, fourth and further adjacent lists of the same kind use `*` or `N)` instead, so they stay separate lists.
+- **Markers:** bullet lists use `-`, ordered lists use `N.`. In a run of adjacent lists of the same kind, every even-numbered list (the second, the fourth and so on) uses `*` or `N)` instead, so they stay separate lists.
 - **Numbering** starts at the list's `start` and counts up.
 - **Indentation:** an item's continuation lines and nested blocks are indented by the width of its own marker (`- ` = 2, `10. ` = 4).
 - **Loose lists:** a list is loose (blank lines between items and between an item's blocks) if any item has two or more paragraphs, or a nested numbered list that doesn't start at 1. Otherwise it is tight.
@@ -172,7 +172,7 @@ An item with a paragraph, a second paragraph, then a nested list. Two paragraphs
 - Next item
 ```
 
-Two adjacent bullet lists, then a tight list with a nested list:
+Three adjacent bullet lists; the third is a tight list with a nested list:
 
 ```markdown
 - one
@@ -197,6 +197,7 @@ An ordered list that starts at 9. Item 10 has two paragraphs, so the list is loo
 ## 8. Content Pulp doesn't understand
 
 - A top-level block becomes editable only if Pulp would write it back exactly as it is in the file. Otherwise it is kept as a protected raw block, byte for byte.
+- The one change Pulp makes to every file on reading, protected blocks included: line endings become `\n` and text is put in Unicode NFC form.
 - Lines that belong to no block become raw blocks too. Example: link reference definitions.
 - Lines that belong to no block are kept together with a block they touch (with no blank line between), as one protected block.
 - Blocks that would run together if Pulp tidied the blank lines between them are kept as one protected block, blank lines and all. Example: a list ending in an empty item, two blank lines, then another list.
@@ -235,7 +236,7 @@ For each rule, what the editor has and what is saved (or read back):
 | Formatting never starts or ends on whitespace | bold `bold ` (with a trailing space), then plain `text` | `**bold** text` |
 | Subscript and superscript never cover whitespace | `x`, then superscript `2 ` (with a trailing space), then `y` | `x^2^ y` |
 | Superscript wins over subscript | `2` marked both subscript and superscript | `^2^` |
-| Strikethrough is removed where it touches subscript | `2` marked both strikethrough and subscript | `H~2~O` (no `~~`) |
+| Strikethrough is removed where it touches subscript | `H`, then `2` marked both strikethrough and subscript, then `O` | `H~2~O` (no `~~`) |
 | Trailing line breaks are dropped | `end` followed by a line break | `end` |
 | An empty document is one empty paragraph | nothing at all | the body `""`, read back as one empty paragraph |
 
@@ -243,8 +244,9 @@ For each rule, what the editor has and what is saved (or read back):
 
 - Files written in another style are kept but not editable. This includes `_italic_`, `*` bullets and hard-wrapped lines; editing them arrives with "New project from folder" in 1b.
 - Pandoc collapses runs of spaces when publishing; Pulp's own files keep them.
-- A list placed directly after a protected list with the same marker is read back as part of that protected block. Its text is kept, but it is no longer editable.
+- Pulp writes a new list placed directly after a protected block with `-` or `1.`. If the protected block is a list with that same marker, the two are read back as one protected block. Its text is kept, but the new list is no longer editable.
 - The other way round: a protected list placed directly after an editable list of the same kind may be read back as editable, or may merge with it into one protected block. Its text is unchanged.
+- More generally, any protected block placed directly after an editable list may be read back as part of that list, when it starts with an indent or would otherwise continue the list. Its text is unchanged.
 
 One example for each limit, in the same order:
 
@@ -258,13 +260,12 @@ that stays as it is.
 
 two  spaces here (Pandoc publishes one; Pulp keeps both)
 
-* an old list, protected
-* with a star marker
+1. an old list, protected by its [link](https://example.org)
 
-* a new list Pulp writes with a star
+1. a new list Pulp writes
 ```
 
-The last two lists use the same marker and sit next to each other, so they read back as one protected block. All their text is kept.
+The last two lists use the same marker `1.` and sit next to each other, so they read back as one protected block. All their text is kept.
 
 The other way round: an editable list, then a protected list written with `*`. Pulp writes a second list exactly like that, so the protected list reads back as an editable list. Its text is unchanged:
 
@@ -273,6 +274,16 @@ The other way round: an editable list, then a protected list written with `*`. P
 
 * an old list, protected
 * with a star marker
+```
+
+More generally: the file has two protected paragraphs, each starting with two spaces, and the writer puts a new bulleted list between them. On reopening, "Second paragraph." is read back as the list item's second paragraph. Its text is unchanged:
+
+```markdown
+  First paragraph.
+
+- a new list
+
+  Second paragraph.
 ```
 
 ## 11. Examples
