@@ -234,7 +234,13 @@ function applyFlanking(line: Line): void {
           changed = true;
         }
       };
-      for (const d of run) if (!d.opens) open.splice(open.findIndex((o) => o.partner === d), 1);
+      for (const d of run) {
+        if (d.opens) continue;
+        const at = open.findIndex((o) => o.partner === d);
+        // Every closer's opener comes earlier on the same line (inlinePieces closes all at a break).
+        if (at < 0) throw new Error('internal: a closing delimiter has no open partner');
+        open.splice(at, 1);
+      }
       // CommonMark §6.2: an opening run that can also close would close the other emphasis mark
       // still open with the same character, unless the rule of 3 stops it. Switch its character.
       const family = run[0].family;

@@ -19,6 +19,22 @@ type CharUnit = { kind: 'char'; ch: string; marks: Marks };
 type Unit = CharUnit | { kind: 'break' } | { kind: 'other'; node: PulpNode };
 
 const WS = /\s/u;
+/** A high surrogate not followed by a low one, or a low surrogate not preceded by a high one. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** A raw block's markdown without blank lines (only spaces and tabs) at its start or end. */
+function trimBlankLines(markdown: string): string {
+  const lines = markdown.split('\n');
+  const blank = (l: string): boolean => /^[ \t]*$/.test(l);
+  let s = 0;
+  let e = lines.length;
+  while (s < e && blank(lines[s])) s++;
+  while (e > s && blank(lines[e - 1])) e--;
+  return lines.slice(s, e).join('\n');
+}
+
+/** A normalised raw block whose markdown was empty or only blank lines. */
+const isEmptyRaw = (node: PulpNode): boolean => node.type === 'rawBlock' && node.attrs?.markdown === '';
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
@@ -73,7 +89,7 @@ function normalizeInline(children: PulpNode[], heading: boolean): PulpNode[] {
   for (const child of children) {
     if (child.type === 'text') {
       const marks = readMarks(child);
-      const text = (child.text ?? '').normalize('NFC').replace(/\u0000/g, '�');
+      const text = (child.text ?? '').replace(LONE_SURROGATE, '�').normalize('NFC').replace(/\u0000/g, '�');
       text.split(/\r\n|\r|\n/).forEach((segment, idx) => {
         if (idx > 0) {
           units.push(heading ? { kind: 'char', ch: ' ', marks: new Set(marks) } : { kind: 'break' });
@@ -148,9 +164,12 @@ function normalizeNode(node: PulpNode): PulpNode {
     case 'orderedList':
       out.attrs = { start: clampInt(node.attrs?.start, 0, 999_999_999, 1) };
       break;
-    case 'rawBlock':
-      out.attrs = { markdown: node.attrs?.markdown };
+    case 'rawBlock': {
+      // Blank lines at the edges would add blank lines between blocks; checkDoc rejects a non-string.
+      const markdown = node.attrs?.markdown;
+      out.attrs = { markdown: typeof markdown === 'string' ? trimBlankLines(markdown) : markdown };
       break;
+    }
   }
   if (node.type === 'text' || node.type === 'hardBreak') {
     // Only reachable outside a paragraph or heading; keep the shape, checkDoc rejects it.
@@ -164,7 +183,7 @@ function normalizeNode(node: PulpNode): PulpNode {
   if (node.type === 'paragraph' || node.type === 'heading') {
     content = normalizeInline(children, node.type === 'heading');
   } else {
-    content = children.map(normalizeNode);
+    content = children.map(normalizeNode).filter((c) => !isEmptyRaw(c));
     if ((node.type === 'doc' || node.type === 'listItem') && content.length === 0) {
       content = [{ type: 'paragraph' }];
     }

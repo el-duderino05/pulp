@@ -807,4 +807,4 @@ git commit -s -m "test(markdown): round-trip suite, fixtures and performance che
   - On save: `serializeBody(editor.getJSON())`, which is then passed to the core with the header.
 - **Matching schema:** TipTap must be configured to produce exactly `pulpSchema`: the same node and mark names, content expressions, attributes and excludes. Plan 3 adds a test that compares TipTap's generated schema with `pulpSchema`.
 - **Protected blocks:** `rawBlock` is shown as a protected, non-editable block. Plan 3 decides how it looks.
-- **Unsupported content:** `normalizeDoc` throws `UnsupportedContentError` if the editor produces a node or mark this plan doesn't define. Plan 3 treats that as a bug and never saves.
+- **Unsupported content:** `normalizeDoc` (and so `serializeBody`) throws `UnsupportedContentError` if the editor produces a node or mark type this plan doesn't define, and a `RangeError` or `TypeError` from `checkDoc` if the document is structurally invalid. The errors are not wrapped. Plan 3 treats either as a bug and never saves.

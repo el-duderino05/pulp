@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { describe, expect, test } from 'vitest';
 import { normalizeDoc, UnsupportedContentError } from './normalize';
-import { doc, p, h, ul, ol, li, t, br } from './test-builders';
+import { doc, p, h, ul, ol, li, t, br, raw } from './test-builders';
 
 const n = normalizeDoc;
 
@@ -50,6 +50,16 @@ describe('normalizeDoc', () => {
     expect(n(doc(p(t('e', 'bold'), t('́', 'bold'))))).toEqual(doc(p(t('é', 'bold'))));
     const d = doc(p(t('e', 'bold'), t('́')));
     expect(n(n(d))).toEqual(n(d));
+  });
+  test('lone surrogates become U+FFFD, like NUL', () => {
+    expect(n(doc(p(t('a\uD800b'))))).toEqual(doc(p(t('a�b'))));
+    expect(n(doc(p(t('a\uDC00'), t('😀'))))).toEqual(doc(p(t('a�😀'))));
+  });
+  test('raw blocks: empty ones are dropped, blank lines at the edges removed', () => {
+    expect(n(doc(p(t('a')), raw(''), p(t('b'))))).toEqual(doc(p(t('a')), p(t('b'))));
+    expect(n(doc(raw('\n \n\t\n')))).toEqual(doc(p()));
+    expect(n(doc(raw('<div>x</div>\n')))).toEqual(doc(raw('<div>x</div>')));
+    expect(n(doc(raw('\n\t\n  indented\n\nmore\n \n\n')))).toEqual(doc(raw('  indented\n\nmore')));
   });
   test('is idempotent', () => {
     const d = doc(p(t(' a ', 'bold'), br(), t('b\nc', 'subscript')), h(1, t('x\ny')));
