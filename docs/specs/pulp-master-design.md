@@ -1,6 +1,6 @@
 # Pulp — Master Design Spec
 
-**Status:** Draft for review (v8.1) · **Date:** 2026-11-06 · **Owner:** Gonçalo
+**Status:** Draft for review (v11.1) · **Date:** 2026-11-06 · **Owner:** Gonçalo
 **Working name:** "Pulp" (formerly "Quill"). Still to be checked against existing software (for example Red Hat's Pulp project and the PuLP Python library) before release. See §23.
 
 This is the master spec: product vision, every decision taken so far, and the milestone plan. Each milestone gets its own short detailed spec when work on it starts (§25).
@@ -17,7 +17,7 @@ Pulp is a free, open-source, community-developed writing app and project organis
 2. **Robust.** No lost work: atomic saves, version history, layered trash, backups. **Pulp preserves content it doesn't understand** (from newer versions or future extensions) rather than deleting it.
 3. **Light and minimal by default, extensible by the user.** Tools appear when the task calls for them.
 4. **Runs everywhere.** Windows, macOS, Linux and Android in 1.0; iPad later (§24).
-5. **No proprietary dependencies and no paywalled features.** Works fully offline. **Never sends data anywhere without asking** (§18.4).
+5. **No proprietary dependencies and no paywalled features.** Works fully offline. **Never sends data anywhere without asking** (§18.5).
 
 **Non-goals for 1.0:** real-time collaboration, accounts or servers, code plugins.
 
@@ -25,6 +25,8 @@ Pulp is a free, open-source, community-developed writing app and project organis
 
 - Pulp never requires a server run by the project. Any future server is optional and run by whoever wants one (§24).
 - **Pulp has no AI features**: no AI writing assistant, text generation, AI rewriting or AI analysis, in any version, built in or as an official plugin.
+  - Pulp ships no AI models. It may use **standard operating-system services** that users already have, such as system voices (read aloud), system dictation and system spell-check, even where the operating system implements them with AI. Pulp does not choose, download or bundle those components.
+  - Consequently, audiobooks are supported through **human narration** only (§26); AI voices and voice cloning are excluded.
 
 ---
 
@@ -51,6 +53,7 @@ Development happens on Windows 11. GitHub Actions builds macOS and Linux and run
 
 - **Library:** Pulp's default home folder, holding `Projects/`, `Inbox/`, `Templates/`, `Backups/` and the library trash. Project folders can also be opened from anywhere on disk.
 - **Project:** a folder with a manifest. A short piece can be a project with a single document.
+- **Works:** a project holds **one or more works**, for example *Novel*, *Screenplay adaptation*, *Stage version*, or the books of a series. A work is a top-level folder marked as a work in the manifest. Each work has its own default document kind, order, targets, deadline, statistics, views (Outliner, plot grid, story timeline) and publish presets. **Shared across all works:** profiles, boards, notes, Shelf, bibliography and assets, so one set of characters and places serves every version of the story. Every project template creates its first work; **"Add work"** adds another from a work template. A single-work project looks and behaves exactly like a project without works.
 - **Inbox:** where project-less (standalone) items live. It can have subfolders and has its own Shelf; deleted Inbox items go to the library trash. "Add to project" *moves* an item in; it is never copied, so no duplicates drift apart.
 - **Protected folders:** Library, Projects, Inbox, Templates, Backups and Trash, plus each project's manifest and hidden folders, cannot be deleted, renamed or moved inside Pulp. On every start Pulp checks they exist, recreates any missing ones empty, and tells the user if something was unexpectedly gone.
 - **Five item types**, each with its own icon and colour (types always differ by icon shape, never by colour alone):
@@ -106,7 +109,7 @@ Pulp Library/
 
 - **Item metadata lives only in each item's own file**: the header of text files, inside board JSON, and in the `.meta.json` companion for assets (which can't hold a header). It is never duplicated in the manifest.
 - **The manifest holds only structure and project settings:** format version, project ID and name, the tree (order, folders, variants), status, label and plotline lists, project-level settings (§19).
-- **Folders live only in the manifest's tree.** Each folder entry holds `id`, `type`, `title`, `path`, `synopsis` and an ordered `children` list (by item ID). The merge engine treats each folder entry as an item by its ID, so edits to different folders never conflict.
+- **Folders live only in the manifest's tree.** Each folder entry holds `id`, `type`, `title`, `path`, `synopsis` and an ordered `children` list (by item ID). A top-level folder that is a work also holds a `work` object (default kind, targets, deadline, publish preset choices); adding it is an additive format change. The merge engine treats each folder entry as an item by its ID, so edits to different folders never conflict.
 - **Rebuild from files:** if the manifest is damaged or missing, Pulp rebuilds it from item headers. Only folder synopses and custom ordering can be lost, and Pulp says so. The manifest is also covered by atomic saves, snapshots and backups.
 - Disk folders mirror the project tree. Ordering lives in the manifest, so file names never need number prefixes.
 - **Folders renamed or moved outside Pulp** are detected on the next start (a known folder missing, an unknown folder with the same contents) and reconnected, keeping their ID and synopsis.
@@ -236,9 +239,10 @@ Sync services, other apps and file managers will produce states Pulp didn't crea
 - **Using a template copies it, never links it.** Editing a template affects future uses only. Templates a project uses are also copied into its `.templates/`, so the project works on any device.
 - Project templates are self-contained and bring their own profile and board templates.
 - "Save as template" works on any item, folder, board or project. Templates are edited in the normal editor, under a "Template" banner.
-- **Six built-in project templates:** Blank · Short piece · Novel · Non-fiction book · Screenplay / stage play · Academic paper.
+- **Six built-in project templates:** Blank · Short piece · Novel · Non-fiction book · Screenplay / stage play · Academic paper. Each creates the project's first work.
+- **Work templates** (used by "Add work"): Novel, Short story, Screenplay, Stage play, Non-fiction, Academic paper.
 - **Built-in document templates:** Prose chapter · Poem · Essay · Academic paper · Blog post · Diary entry · Screenplay · Stage play.
-- **Board templates:** Ideas (one column per idea type), Timeline, Relationship map, Setting overview.
+- **Board templates:** Ideas (one column per idea type), Timeline, Relationship map, Setting overview, Mind map.
 - **The Novel template** includes a **scene type** label set (Flashback, Dream, Prologue, Epilogue, Interlude), editable like any labels, and a **Story bible** profile with Premise, Themes and Setting sections.
 - **Built-in profile templates** include a **Character interview**: a character profile whose sections are questions (for example "What does she fear most?", "What would she never forgive?"), alongside the standard character profile.
 
@@ -251,6 +255,7 @@ Sync services, other apps and file managers will produce states Pulp didn't crea
 | Fonts | user typefaces |
 | Themes | colour schemes |
 | Writing guidelines | rules files (§7.6) |
+| Snippets | abbreviation sets (§18.2) |
 | Comment categories | review category sets |
 | Interface translations | UI languages |
 
@@ -269,6 +274,11 @@ Write and Revise are switched inside each document (Ctrl+E). Profiles and notes 
 | Visible | Text, optional typewriter scrolling, thin target/timer bar | Project tree, side panel, comments, highlights, word count, status |
 | Spell-check underlines | Off by default (toggle) | On by default (toggle) |
 | Tools | — | Rewrite, Reorder, Comments, Flags, Guidelines, Shelf, synonyms |
+
+**Write-mode options** (all off by default):
+
+- **Hemingway mode:** backspace and delete are disabled while drafting, so a rough version gets finished before revising. Undo still works; Revise mode is unaffected.
+- **Focus highlight:** everything except the current sentence or paragraph is dimmed.
 
 **Undo:** undo history covers the whole editing session across autosaves. When a file is reloaded after an outside change, undo history for that document resets, and Pulp says so. A snapshot is always taken before the reload.
 
@@ -404,14 +414,14 @@ For a project-wide rename, matches are shown with their surrounding sentence, in
 
 **In 1.0:**
 
-- Card types: text, checklist, image, web link. **Link previews (title and image) are fetched only when you add the link**, and can be switched off entirely (§18.4). Links open in the browser.
+- Card types: text, checklist, image, web link. **Link previews (title and image) are fetched only when you add the link**, and can be switched off entirely (§18.5). Links open in the browser.
 - **Project-item cards:** a live preview of a profile, document or note that opens on click.
 - Arrows between cards, with optional labels.
 - Nested boards, colours, grouping.
 - **Quick capture** (Ctrl+Shift+I) adds an idea card to the project's Ideas board from anywhere.
 - **Promote a card** into a note, profile or document; the card stays behind as a link.
 - Board PNG previews are generated when a board is closed or exported, not on every save.
-- Templates: Ideas, Timeline, Relationship map, Setting overview.
+- Templates: Ideas, Timeline, Relationship map, Setting overview, Mind map.
 
 **Deferred:** freehand drawing and pen input, shapes, card ratings.
 
@@ -421,8 +431,9 @@ For a project-wide rename, matches are shown with their surrounding sentence, in
 
 ## 11. Navigation, search and project views
 
-- **Project tree** (binder): manuscript order, drag-and-drop, item icons and colours.
-- **Outliner:** the manuscript as a sortable table (title, synopsis, status, words, POV, Featuring). Separate from Boards.
+- **Project tree** (binder): each work's order, drag-and-drop, item icons and colours. In projects with several works, works appear as top-level folders with a distinct icon.
+- **Views are per work:** the Outliner, plot grid and story timeline show one work at a time, with a work selector. Profiles' "Appears in" lists cover every work, labelled by work.
+- **Outliner:** a work's documents as a sortable table (title, synopsis, status, words, POV, Featuring). Separate from Boards.
 - **Plot grid:** a second Outliner view, with documents as rows and chosen characters, plotlines or labels as columns, filled from Featuring, POV, plotlines and labels. Shows at a glance who appears where and which plotlines advance.
 - **Story timeline:** scenes in **story order** (by story date) instead of manuscript order, for flashbacks and non-linear books. Scenes without a sortable date are listed separately.
 - **Project map:** a picture of how documents and profiles link to each other, drawn automatically from links, Featuring and POV, using the Boards engine. Read-only; clicking opens an item.
@@ -438,7 +449,7 @@ For a project-wide rename, matches are shown with their surrounding sentence, in
 
 ## 12. Targets, sessions, focus, deadlines and graphs
 
-- **Targets** (stored on items): word target and maximum per document; word target per project.
+- **Targets** (stored on items): word target and maximum per document; word target and deadline per work (and per project, for the total).
 - **Sessions** (temporary): an optional timer and/or word goal.
 - **Focus mode** = a session plus a soft lock:
   - full screen, interface hidden, duration in 5-minute steps;
@@ -477,13 +488,14 @@ For a project-wide rename, matches are shown with their surrounding sentence, in
 
 Opened from the main menu, or from inside a document or project with that source already filled in.
 
-1. **Source:** a single document, Inbox items, or a project.
-2. **Contents:** pre-filled from manuscript order, include-in-export settings and active variants. Drag to reorder; untick to leave out.
+1. **Source:** a single document, a work, or Inbox items. Publishing combines documents of one kind at a time; a work with mixed kinds publishes each kind with its own preset.
+2. **Contents:** pre-filled from the work's order, include-in-export settings and active variants. Drag to reorder; untick to leave out.
 3. **Format:**
    - preset and publish styles;
    - front and back matter, title page, table of contents;
    - page size, margins, headers;
    - page numbers, with "omit on this page" (title and chapter-opening pages);
+   - **print-ready PDF:** bleed and crop marks, control of widows and orphans, hyphenation by language. PDF/X output if Typst supports it (checked at Milestone 3a; otherwise listed in §26);
    - footnotes or endnotes, citation style.
 4. **Preview:** source and output side by side. Device previews:
    - print: A4, Letter, A5, 6×9" paperback;
@@ -628,17 +640,26 @@ Anything involving layout or combining several documents happens in the Publish 
 - **Accessibility (1.0):** full keyboard navigation, screen-reader labels, adjustable interface size, reduced-motion setting, dyslexia-friendly fonts.
 - **Interface languages:** English and Portuguese (Portugal) in 1.0. All interface text lives in translation files, and translations are content packs.
 
-### 18.2 First launch and new projects
+### 18.2 Snippets
+
+Abbreviations that expand into text as you type, inside Pulp:
+
+- **Plain snippets:** `;ana` → "Ana Margarida Ferreira".
+- **Snippets with fields:** a template with fields to fill in before it is inserted (for example an interview header asking for date, interviewee and place).
+- Stored at **Library** level (yours everywhere) or **project** level (travel with the project); shared as a **content pack**.
+- Searchable from the quick switcher's command mode. Nothing expands until the user creates a snippet.
+
+### 18.3 First launch and new projects
 
 1. Interface language.
 2. Author name (§3).
 3. Library location, with a short explanation of sync folders.
-4. Update checks: ask (§18.4).
+4. Update checks: ask (§18.5).
 5. Optional sample project.
 
 **New projects open straight into their first document**, cursor ready, with the template's structure visible in the tree. A project never starts on a blank screen with no obvious place to write.
 
-### 18.3 Default shortcuts
+### 18.4 Default shortcuts
 
 Ctrl = Cmd on macOS. All are configurable, with clash detection.
 
@@ -657,7 +678,7 @@ Ctrl = Cmd on macOS. All are configurable, with clash detection.
 - **Keyboard layouts:** defaults avoid Ctrl+Alt+letter, because on Windows AltGr equals Ctrl+Alt and types characters on many European layouts (for example "ś" on Polish, "µ" on German). All defaults are tested on Portuguese, Spanish, French, German and Polish layouts.
 - The `[[` and `[@` triggers are configurable, since `[` needs AltGr on Portuguese, Spanish, French and German keyboards.
 
-### 18.4 Network and privacy
+### 18.5 Network and privacy
 
 Pulp works fully offline. It contacts the network only:
 
@@ -739,7 +760,7 @@ Gonçalo does not review code directly, so automated tests are the main proof th
 - **Dependency licences** are tracked in a list and checked before each release (code libraries, fonts, dictionaries, CSL styles).
 - **Recommended:** a short consultation with an open-source lawyer before the public 1.0.
 - **Distribution:**
-  - desktop: GitHub Releases with Tauri's signed auto-updater (desktop only; update checks need consent, §18.4);
+  - desktop: GitHub Releases with Tauri's signed auto-updater (desktop only; update checks need consent, §18.5);
   - Linux: Flatpak and AppImage;
   - Android: F-Droid and Google Play;
   - iPad (later): App Store.
@@ -799,11 +820,11 @@ Each milestone produces something usable and starts with its own short detailed 
 | # | Milestone | Contents |
 |---|---|---|
 | 1a | **Walking skeleton** | Public repository with DCO, CONTRIBUTING and code of conduct; Pulp Markdown definition and round-trip tests; ID format, text encoding, file-name rule and schemas (§4.8); format and reader versions (§4.4); the disk-disagreement rules for found items, missing items, duplicate IDs, failed saves and a missing Library (§4.9); command registry and core boundary; storage layer; Library, one project, tree, prose documents (Write/Revise shell), autosave, snapshots, trash, protected folders, format versioning, per-device data, first launch. **Early technical tests:** spell-check speed, ODT/RTF import quality, Android open-and-save. Goal: Gonçalo writes in Pulp within weeks. |
-| 1b | **Foundation** | Shared mechanisms (text anchor, find-review-replace, operation groups, conflict screen); notes, profiles, links and backlinks, Archived status, storage indicator, search, find & replace, quick switcher, themes, spell-check, tables, Add files (with split on import), Export item, New project from folder, image handling and "Used in", asset details (alt text, caption, credit, focal point), manifest rebuild, crash recovery, presence markers, header re-identification, Private flag, personal and project dictionaries, import report, long-document suggestion, security rules. Windows, macOS and Linux via CI. From day one: language-independent word counting, translation files, keyboard navigation, screen-reader labels. |
-| 2 | **Writer's toolkit** | Rename from profile (with name fields and review groups), POV, story date and plotline fields, scene types, Story bible and Character interview templates, read aloud, Shelf (with origin and restore), Rewrite, Reorder, comments (threaded, companion files, automatic merge by ID, tracked changes converted to comments), missing-pack fallback, flags, rules checker and writing guidelines, thesaurus, targets, sessions, focus mode, stats and graphs, Template Library and built-in templates, content packs, interface translation (EN/PT). |
-| 3a | **Publish** | Publish workspace and presets (Book, Academic article, News article, Blog post, Plain), pre-flight check (on the rules checker), Typst PDF, EPUB/DOCX/ODT/HTML/Markdown, device previews, footnotes and endnotes, project fonts and missing-font fallback, web story export. |
+| 1b | **Foundation** | Works (manifest flag, "Add work", work folders in the tree); shared mechanisms (text anchor, find-review-replace, operation groups, conflict screen); notes, profiles, links and backlinks, Archived status, storage indicator, search, find & replace, quick switcher, themes, spell-check, tables, Add files (with split on import), Export item, New project from folder, image handling and "Used in", asset details (alt text, caption, credit, focal point), manifest rebuild, crash recovery, presence markers, header re-identification, Private flag, personal and project dictionaries, import report, long-document suggestion, security rules. Windows, macOS and Linux via CI. From day one: language-independent word counting, translation files, keyboard navigation, screen-reader labels. |
+| 2 | **Writer's toolkit** | Hemingway mode, focus highlight, snippets, rename from profile (with name fields and review groups), POV, story date and plotline fields, scene types, Story bible and Character interview templates, read aloud, Shelf (with origin and restore), Rewrite, Reorder, comments (threaded, companion files, automatic merge by ID, tracked changes converted to comments), missing-pack fallback, flags, rules checker and writing guidelines, thesaurus, targets, sessions, focus mode, stats and graphs, Template Library and built-in templates, content packs, interface translation (EN/PT). |
+| 3a | **Publish** | Publish workspace and presets (Book, Academic article, News article, Blog post, Plain), print-ready PDF options, pre-flight check (on the rules checker), Typst PDF, EPUB/DOCX/ODT/HTML/Markdown, device previews, footnotes and endnotes, project fonts and missing-font fallback, web story export. |
 | 3b | **Academic** | References (BibTeX/RIS/EndNote XML import, Zotero, autocomplete, open cited PDF, style hierarchy), Article info profile, maths, figure and table captions with cross-references, multi-panel figures, DOCX review round-trip. |
-| 4 | **Scripts & Boards** | Script editor (with per-scene Featuring), Fountain/FDX import and export (including FDX publish), Play / Screenplay preset, plot grid, story timeline, project map, Boards (with Ideas board and quick capture), Outliner, variants. |
+| 4 | **Scripts & Boards** | Split view (two documents side by side), Mind map board template, script editor (with per-scene Featuring), Fountain/FDX import and export (including FDX publish), Play / Screenplay preset, plot grid, story timeline, project map, Boards (with Ideas board and quick capture), Outliner, variants. |
 | 5 | **Travel** | Android (with save-on-background), `.pulp` export and import, full merge engine (extending the conflict screen). → **Release 1.0** |
 
 Every milestone also updates the user guide (§23) and the always-tested list (§21).
@@ -814,25 +835,35 @@ Every milestone also updates the user guide (§23) and the always-tested list (�
 
 - Code plugins
 - Per-project encryption (the design leaves room for it). **First priority for v2**, for journalists' sources and private writing.
-- Split view
 - System notifications
-- Cross-project links
+- Cross-project links (no longer needed for series, which are one project with several works, §3)
 - Board drawing and pen input
 - Card ratings
 - Snapshot comparison (diff)
 - Script revision colours
 - Track changes (and DOCX track-changes round-trip)
-- "Send manuscript to board" as cards
+- **Corkboard synced with the manuscript:** cards that stay live-linked to chapters and scenes, so moving a card reorders the manuscript (extends the earlier "send manuscript to board" idea)
+- **Comics and storyboards, in two stages:**
+  1. **Comic script** document kind: text only, in the industry layout (Page → Panel → description, Caption, Balloon with the speaking character), with character autocomplete from profiles.
+  2. **Comic and storyboard pages** (visual, own spec): fixed-size pages with ready-made panel layouts; panels that can be resized and rearranged; speech bubbles, captions and sound effects; text written directly in panels; images imported into panels; shot notes per panel for film storyboards (shot size, camera movement, duration); export to PDF and images. Built on its own page-layout engine sharing card types and assets with Boards. Illustration sets as content packs using openly licensed art only. Panels hold their own text. **Connection to scripts is a one-time copy, never a live link:** "Lay out pages from script" creates pages and panels with the script's text copied in, and "Export pages as comic script" goes the other way; afterwards the two are independent.
+- Typewriter sounds in Write mode (off by default; sound sets as a content pack)
+- PDF/X output, if Typst cannot provide it at Milestone 3a
 - iPad; iPhone companion
 - Collaboration stages 2 and 3 (§24)
 - Multimedia block types, Story document kind and direct blog publishing (§24)
 - JATS export and journal template packs (§24)
 - Interactive timeline export and branching stories (§24)
-- Direct import of Scrivener projects (`.scriv`) and Bibisco projects
-- Multi-voice read aloud (a different voice per character, set in character profiles)
+- Direct import of Scrivener projects (`.scriv`), Bibisco projects and Manuscript projects (an MPL-2.0 Mac/iOS app that also stores plain Markdown folders)
+- Multi-voice read aloud (a different system voice per character, set in character profiles)
+- **Human-narrated audiobooks** (no synthetic or AI voices):
+  - a **narration script** generated from a work, chapter by chapter, with dialogue tagged by character;
+  - a **pronunciation** field on profiles (character and place names), shown in the narration script;
+  - a **recording per chapter**, imported from audio files or recorded in Pulp;
+  - **audiobook publish**: chapter files or one file with chapter markers, plus cover and metadata;
+  - **pre-flight checks** against an audiobook platform's published technical requirements (loudness, peak level, noise floor, file format), as a rules pack;
+  - audio encoder licences checked when specified (MP3 and Opus are unencumbered; AAC/M4B needs review).
 - More board templates: flow map
 - Custom story calendars (as a content pack format) for story dates
-- Series: several projects sharing one set of profiles (needs cross-project links)
 - Life events on character profiles, shown on the story timeline
 - Compression of PDF, audio and video assets (likely as an optional add-on, since the tools involved are large)
 - Polished right-to-left support and further bundled language packs
