@@ -67,7 +67,7 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
     if (open && !find(next, open)) {
       setOpenId(null);
       setDoc(null);
-    }
+    } else if (open) setDoc(await readDocument(pid, open)); // titles may have changed
     setTrashCount(((await listProjectTrash(pid)) ?? []).length);
   }, [pid]);
 

@@ -198,3 +198,31 @@ it('shows storage line, trash count, and Library link closes the project', async
   await waitFor(() => expect(onBack).toHaveBeenCalled());
   expect(sent(calls, 'close_project')[0].args).toEqual({ project: 'p1' });
 });
+
+it('renaming the open document updates the pane heading', async () => {
+  let renamed = false;
+  mock({ rename_node: () => { renamed = true; return null; }, read_document: () => ({ title: renamed ? 'Brand new' : 'Old title', body: 'x' }) },
+    () => { const t = baseTree(); if (renamed) t[0].children[0].title = 'Brand new'; return t; });
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await screen.findByRole('heading', { name: 'Old title' });
+  item('Chapter 1').focus();
+  await user.keyboard('{F2}Brand new{Enter}');
+  expect(await screen.findByRole('heading', { name: 'Brand new' })).toBeTruthy();
+});
+
+it('+ Document under a collapsed folder opens rename on the new item', async () => {
+  let made = false;
+  mock({ create_document: () => { made = true; return 'new1'; } }, () => {
+    const t = baseTree();
+    if (made) t[1].children.push(doc('new1', 'Untitled'));
+    return t;
+  });
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await user.click(item('Part Two')); // collapses it
+  expect(screen.queryByRole('treeitem', { name: 'Scene' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: '+ Document' }));
+  const input = await screen.findByRole('textbox');
+  expect(document.activeElement).toBe(input);
+});

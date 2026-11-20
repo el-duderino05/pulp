@@ -42,6 +42,22 @@ export default function Tree(p: {
     if (menuId) el(menuId)?.focus();
   }, [menuId]);
 
+  // A new item can sit under a collapsed folder: open its ancestors so the rename input shows.
+  useEffect(() => {
+    if (!renamingId) return;
+    const path = (ns: TreeNode[]): string[] | null => {
+      for (const n of ns) {
+        if (n.id === renamingId) return [];
+        const sub = path(n.children);
+        if (sub) return [n.id, ...sub];
+      }
+      return null;
+    };
+    const anc = path(nodes) ?? [];
+    if (anc.some((a) => collapsed.has(a))) setCollapsed((c) => new Set([...c].filter((x) => !anc.includes(x))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renamingId, nodes]);
+
   // After a rename ends, put focus back on the item.
   const wasRenaming = useRef<string | null>(null);
   useEffect(() => {
