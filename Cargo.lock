@@ -3055,6 +3055,7 @@ dependencies = [
 name = "pulp"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "pulp-core",
  "serde",
  "serde_json",

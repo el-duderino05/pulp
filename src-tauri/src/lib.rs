@@ -2,6 +2,7 @@
 mod device;
 mod error;
 mod library_cmds;
+mod project_cmds;
 mod state;
 mod sync;
 
@@ -19,6 +20,7 @@ pub fn run() {
                 device: Mutex::new(device::DeviceConfig::load(&config_path)),
                 config_path,
                 library: Mutex::new(None),
+                projects: Default::default(),
             });
             Ok(())
         })
@@ -26,6 +28,29 @@ pub fn run() {
             library_cmds::startup,
             library_cmds::create_library,
             library_cmds::open_library,
+            library_cmds::list_projects,
+            library_cmds::create_project,
+            library_cmds::add_external_project,
+            library_cmds::forget_external_project,
+            library_cmds::trash_project,
+            library_cmds::list_library_trash,
+            library_cmds::restore_project,
+            library_cmds::delete_library_trash_entry,
+            library_cmds::empty_library_trash,
+            project_cmds::open_project,
+            project_cmds::close_project,
+            project_cmds::project_tree,
+            project_cmds::create_document,
+            project_cmds::create_folder,
+            project_cmds::rename_node,
+            project_cmds::reorder_node,
+            project_cmds::move_document,
+            project_cmds::trash_node,
+            project_cmds::list_project_trash,
+            project_cmds::restore_trash_entry,
+            project_cmds::delete_trash_entry,
+            project_cmds::empty_project_trash,
+            project_cmds::read_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
