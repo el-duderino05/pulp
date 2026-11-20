@@ -57,3 +57,37 @@ input {
 .btn:disabled { opacity: 0.5; }
 .actions { display: flex; justify-content: flex-end; gap: 12px; }
 .error { color: var(--danger); font-size: 14px; }
+
+/* Library / trash / dialogs / menus */
+.page { min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
+.page-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 48px; border-bottom: 1px solid var(--border); }
+.brand { font-family: var(--font-doc); font-weight: 600; font-size: 24px; }
+.sub { font-size: 13px; color: var(--muted); margin-left: 16px; }
+.page-body { flex: 1; padding: 40px 48px; display: flex; flex-direction: column; gap: 20px; }
+.page-body h1 { margin: 0; font-family: var(--font-doc); font-weight: 600; font-size: 28px; }
+.note { margin: 0; font-size: 13px; color: var(--muted); }
+.btn-white { background: var(--card); display: inline-flex; align-items: center; gap: 8px; }
+.btn-danger { background: var(--danger); }
+.btn-danger-outline { color: var(--danger); border-color: #c9a49e; background: var(--card); }
+.list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.list > li { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid #ece8e0; position: relative; }
+.list > li:last-child { border-bottom: none; }
+.list .text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.list .name { font-size: 17px; font-weight: 600; }
+.list .meta { font-size: 13px; color: var(--muted); }
+.link { font: inherit; font-size: 17px; font-weight: 600; color: var(--ink); background: none; border: none; padding: 0; text-align: left; cursor: pointer; }
+.link:hover { color: var(--accent); }
+.more { min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--muted); font-size: 20px; }
+.badge { font: inherit; font-size: 12px; font-weight: 600; color: var(--badge-text); background: var(--badge-bg); border: none; border-radius: 999px; padding: 4px 10px; min-height: 0; }
+.back { background: none; border: none; color: var(--accent); font-size: 13px; padding: 0; min-height: 0; text-align: left; cursor: pointer; }
+.trash-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.trash-btn { min-height: 40px; }
+.menu { position: absolute; right: 20px; top: 48px; z-index: 10; list-style: none; margin: 0; padding: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / 12%); min-width: 180px; }
+.menu button { width: 100%; text-align: left; border: none; background: none; padding: 0 12px; border-radius: 6px; }
+.menu button:hover, .menu button:focus-visible { background: var(--accent-tint); }
+.menu .danger { color: var(--danger); }
+.scrim { position: fixed; inset: 0; background: rgb(31 29 26 / 40%); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.dialog { width: 440px; padding: 32px; gap: 16px; }
+.dialog h2 { margin: 0; font-family: var(--font-doc); font-size: 22px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.page-head .btn-primary { display: inline-flex; align-items: center; gap: 8px; }
