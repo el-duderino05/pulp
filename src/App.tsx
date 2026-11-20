@@ -6,13 +6,7 @@ import { handleShortcut } from "./app/commands";
 import Setup from "./screens/Setup";
 import LocateLibrary from "./screens/LocateLibrary";
 import Library from "./screens/Library";
-
-// Stub until Task 10 builds the Project screen.
-const Project = ({ project, onBack }: { project: OpenedProject; onBack: () => void }) => (
-  <main>
-    <button type="button" onClick={onBack}>‹ Library</button> {project.name}
-  </main>
-);
+import Project from "./screens/Project";
 
 export default function App() {
   const [s, setS] = useState<Startup | null>(null);
@@ -37,7 +31,7 @@ export default function App() {
     case "libraryMissing":
       return <LocateLibrary path={s.path} onDone={done} />;
     case "ready":
-      return project ? <Project project={project} onBack={() => setProject(null)} /> : <Library info={s.library} onOpen={setProject} />;
+      return project ? <Project opened={project} onBack={() => setProject(null)} /> : <Library info={s.library} onOpen={setProject} />;
     case "failed":
       return <LocateLibrary path="" message={friendlyMessage(s.error)} onDone={done} />;
   }
