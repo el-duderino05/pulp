@@ -13,4 +13,5 @@ pub mod schema;
 pub mod storage;
 pub mod text;
 pub mod trash;
+pub mod tree;
 pub mod version;
