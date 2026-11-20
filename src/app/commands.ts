@@ -39,8 +39,16 @@ function canonShortcut(s: string): string {
   return canon(parts.includes('ctrl') || parts.includes('cmd'), parts.includes('shift'), parts.includes('alt'), key);
 }
 
-// A shortcut can't await its command, so a rejection goes to onError (the caller's banner).
-export function handleShortcut(e: KeyboardEvent, onError: (e: unknown) => void = console.error): boolean {
+// A shortcut can't await its command, so a rejection goes to the active screen's error sink.
+let errorSink: ((e: unknown) => void) | null = null;
+export function setErrorSink(fn: (e: unknown) => void): () => void {
+  errorSink = fn;
+  return () => {
+    if (errorSink === fn) errorSink = null;
+  };
+}
+
+export function handleShortcut(e: KeyboardEvent, onError: (e: unknown) => void = (x) => (errorSink ?? console.error)(x)): boolean {
   const pressed = canon(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey, e.key);
   for (const c of commands.values()) {
     if (!c.shortcut || canonShortcut(c.shortcut) !== pressed) continue;

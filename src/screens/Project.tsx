@@ -5,7 +5,7 @@ import {
   renameNode, reorderNode, trashNode,
   type DocumentView, type OpenedProject, type TreeNode,
 } from '../app/core';
-import { registerCommand, runCommand } from '../app/commands';
+import { registerCommand, runCommand, setErrorSink } from '../app/commands';
 import { friendlyMessage } from '../app/errors';
 import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
@@ -90,6 +90,7 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
 
   useEffect(() => {
     if (view !== 'project') return;
+    const offSink = setErrorSink((e) => setError(friendlyMessage(e)));
     const sel = () => find(live.current.tree, live.current.selectedId);
     const withSel = (fn: (f: Found) => Promise<void>) => () => act(async () => {
       const f = sel();
@@ -148,7 +149,10 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
         }),
       }),
     ];
-    return () => offs.forEach((off) => off());
+    return () => {
+      offs.forEach((off) => off());
+      offSink();
+    };
   }, [view, pid, act, refresh, onBack]);
 
   const select = (id: string) => setSelectedId(id);

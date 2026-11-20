@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, it, vi } from 'vitest';
+import { useState } from 'react';
+import Library from './Library';
+import { handleShortcut, registerCommand } from '../app/commands';
 import Project from './Project';
 import { t } from '../i18n/en';
 import type { OpenedProject, TreeNode } from '../app/core';
@@ -248,4 +251,23 @@ it('a rejected command from a button shows in the banner', async () => {
   await screen.findByRole('heading', { name: 'Title d1' });
   await user.click(screen.getByRole('button', { name: t('project.newDocument') }));
   expect((await screen.findByRole('alert')).textContent).toContain(t('error.DiskFull'));
+});
+
+function Shell() {
+  const [p, setP] = useState(true);
+  return p ? <Project opened={opened()} onBack={() => setP(false)} /> : <Library onOpen={vi.fn()} />;
+}
+
+it('a rejected shortcut shows in the active screen banner and is gone after navigating away', async () => {
+  mock({ list_projects: () => [] });
+  const user = userEvent.setup();
+  const off = registerCommand({ id: 'x', label: 'command.rename', shortcut: 'Ctrl+Shift+9', run: async () => { throw { code: 'Locked', detail: '' }; } });
+  render(<Shell />);
+  await screen.findByRole('heading', { name: 'Title d1' });
+  act(() => { handleShortcut({ key: '9', ctrlKey: true, shiftKey: true } as KeyboardEvent); });
+  expect((await screen.findByRole('alert')).textContent).toContain(t('error.Locked'));
+  await user.click(screen.getByRole('button', { name: t('project.back') }));
+  expect(await screen.findByRole('heading', { name: t('library.title') })).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  off();
 });

@@ -5,7 +5,7 @@ import {
   addExternalProject, createProject, forgetExternalProject, listProjects, openProject, trashProject,
   type LibraryInfo, type OpenedProject, type ProjectRow,
 } from '../app/core';
-import { registerCommand, runCommand } from '../app/commands';
+import { registerCommand, runCommand, setErrorSink } from '../app/commands';
 import { friendlyMessage } from '../app/errors';
 import { formatWhen } from '../app/format';
 import ErrorBanner from '../components/ErrorBanner';
@@ -57,6 +57,11 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
     await addExternalProject(dir);
     await refresh();
   });
+
+  useEffect(() => {
+    if (view !== 'list') return;
+    return setErrorSink((e) => setError(friendlyMessage(e)));
+  }, [view]);
 
   useEffect(() => {
     const offs = [
