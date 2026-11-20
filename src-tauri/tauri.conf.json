@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "pulp",
-        "width": 800,
-        "height": 600
+        "title": "Pulp",
+        "width": 1200,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 600
       }
     ],
     "security": {

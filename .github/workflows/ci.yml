@@ -30,3 +30,21 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+  app:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: cargo fmt -p pulp --check
+      - run: cargo clippy -p pulp --all-targets -- -D warnings
+      - run: cargo test -p pulp
