@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openLibrary, type LibraryInfo } from '../app/core';
 import { friendlyMessage } from '../app/errors';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 
 // `message` replaces the default "library missing" text (used for startup failures).
@@ -24,7 +25,7 @@ export default function LocateLibrary({ path, message, onDone }: { path: string;
       <div className="card">
         <h1>{t('locate.title')}</h1>
         <p>{message ?? t('library.missing', { path })}</p>
-        {error && <p role="alert" className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         <div className="actions">
           <button type="button" className="btn btn-primary" onClick={() => void locate()}>{t('locate.button')}</button>
         </div>

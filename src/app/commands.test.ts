@@ -49,4 +49,14 @@ describe('command registry', () => {
     expect(listCommands().some((c) => c.id === 'a')).toBe(false);
     await expect(runCommand('a')).rejects.toThrow();
   });
+  it('lets a rejected async command reach the caller', async () => {
+    reg({ id: 'a', label: 'command.rename', run: async () => { throw new Error('boom'); } });
+    await expect(runCommand('a')).rejects.toThrow('boom');
+  });
+  it('routes a rejected shortcut command to onError', async () => {
+    const onError = vi.fn();
+    reg({ id: 'a', label: 'command.rename', shortcut: 'F2', run: async () => { throw new Error('boom'); } });
+    expect(handleShortcut(ev('F2'), onError)).toBe(true);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'boom' })));
+  });
 });

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createLibrary, type LibraryInfo } from '../app/core';
 import { friendlyMessage } from '../app/errors';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 
 export default function Setup({ defaultPath, onDone }: { defaultPath: string; onDone: (lib: LibraryInfo) => void }) {
@@ -43,7 +44,7 @@ export default function Setup({ defaultPath, onDone }: { defaultPath: string; on
           </div>
           <p className="help">{t('setup.whereHelp')}</p>
         </div>
-        {error && <p role="alert" className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         <div className="actions">
           <button type="submit" className="btn btn-primary" disabled={!author.trim() || !path.trim()}>{t('setup.create')}</button>
         </div>

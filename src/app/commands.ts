@@ -39,12 +39,13 @@ function canonShortcut(s: string): string {
   return canon(parts.includes('ctrl') || parts.includes('cmd'), parts.includes('shift'), parts.includes('alt'), key);
 }
 
-export function handleShortcut(e: KeyboardEvent): boolean {
+// A shortcut can't await its command, so a rejection goes to onError (the caller's banner).
+export function handleShortcut(e: KeyboardEvent, onError: (e: unknown) => void = console.error): boolean {
   const pressed = canon(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey, e.key);
   for (const c of commands.values()) {
     if (!c.shortcut || canonShortcut(c.shortcut) !== pressed) continue;
     if (c.enabled && !c.enabled()) continue;
-    void c.run();
+    runCommand(c.id).catch(onError);
     return true;
   }
   return false;

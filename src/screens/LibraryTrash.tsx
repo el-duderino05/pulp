@@ -5,6 +5,7 @@ import {
 } from '../app/core';
 import { friendlyMessage } from '../app/errors';
 import { formatWhen } from '../app/format';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { FolderIcon } from '../components/Icons';
@@ -59,7 +60,7 @@ export default function LibraryTrash({ onBack }: { onBack: () => void }) {
             {t('trash.emptyButton')}
           </button>
         </div>
-        {error && <p role="alert" className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         {entries.length === 0 ? (
           <p className="note">{t('trash.empty')}</p>
         ) : (

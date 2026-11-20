@@ -226,3 +226,26 @@ it('+ Document under a collapsed folder opens rename on the new item', async () 
   const input = await screen.findByRole('textbox');
   expect(document.activeElement).toBe(input);
 });
+
+it('failed action keeps the tree and shows the message', async () => {
+  const calls = mock({ rename_node: () => { throw { code: 'Locked', detail: '' }; } });
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await user.click(item('Chapter 2'));
+  await user.keyboard('{F2}New name{Enter}');
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain(t('error.Locked'));
+  expect(sent(calls, 'rename_node')).toHaveLength(1);
+  expect(screen.getByRole('treeitem', { name: 'Chapter 2' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: t('notice.dismiss') }));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('a rejected command from a button shows in the banner', async () => {
+  mock({ create_document: () => { throw { code: 'DiskFull', detail: '' }; } });
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await screen.findByRole('heading', { name: 'Title d1' });
+  await user.click(screen.getByRole('button', { name: t('project.newDocument') }));
+  expect((await screen.findByRole('alert')).textContent).toContain(t('error.DiskFull'));
+});

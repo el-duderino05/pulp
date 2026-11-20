@@ -6,6 +6,7 @@ import {
 } from '../app/core';
 import { friendlyMessage } from '../app/errors';
 import { formatWhen } from '../app/format';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { FolderIcon, TrashIcon } from '../components/Icons';
@@ -80,7 +81,7 @@ export default function ProjectTrash({ project, name, onBack }: { project: strin
             {t('trash.emptyButton')}
           </button>
         </div>
-        {error && <p role="alert" className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         {!error && rows.length === 0 && <p className="note">{t('trash.empty')}</p>}
         {rows.length > 0 && (
           <ul className="list">

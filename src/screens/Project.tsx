@@ -7,6 +7,7 @@ import {
 } from '../app/core';
 import { registerCommand, runCommand } from '../app/commands';
 import { friendlyMessage } from '../app/errors';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 import { TrashIcon } from '../components/Icons';
 import MoveDialog, { foldersOf } from '../components/MoveDialog';
@@ -58,6 +59,8 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
       setBusy(false);
     }
   }, []);
+
+  const run = (id: string) => runCommand(id).catch((e) => setError(friendlyMessage(e)));
 
   // The tree is always replaced with what the core says, never patched locally.
   const refresh = useCallback(async () => {
@@ -156,7 +159,7 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
       if (find(live.current.tree, id)?.node.kind === 'document') void act(() => open(id));
       return;
     }
-    void runCommand(`project.${action}`);
+    run(`project.${action}`);
   };
   const onRename = (id: string, title: string | null) => {
     setRenamingId(null);
@@ -188,18 +191,18 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
     <div className="project">
       <nav aria-label={t('project.nav')} className="project-nav">
         <div className="project-head">
-          <button type="button" className="back" onClick={() => void runCommand('nav.library')}>{t('project.back')}</button>
+          <button type="button" className="back" onClick={() => run('nav.library')}>{t('project.back')}</button>
           <span className="project-name">{opened.name}</span>
         </div>
         <div className="project-add">
-          <button type="button" className="btn-small" disabled={busy} onClick={() => void runCommand('project.newDocument')}>{t('project.newDocument')}</button>
-          <button type="button" className="btn-small" disabled={busy} onClick={() => void runCommand('project.newFolder')}>{t('project.newFolder')}</button>
+          <button type="button" className="btn-small" disabled={busy} onClick={() => run('project.newDocument')}>{t('project.newDocument')}</button>
+          <button type="button" className="btn-small" disabled={busy} onClick={() => run('project.newFolder')}>{t('project.newFolder')}</button>
         </div>
         <div className="project-tree">
           <Tree nodes={tree} selectedId={selectedId} onSelect={select} onAction={onAction} renamingId={renamingId} onRename={onRename} />
         </div>
         <div className="project-foot">
-          <button type="button" className="trash-link" onClick={() => void runCommand('project.showTrash')}>
+          <button type="button" className="trash-link" onClick={() => run('project.showTrash')}>
             <TrashIcon />{t('project.trashLink', { n: trashCount })}
           </button>
           <span className="note">{t('project.saved', { path: opened.path })}{opened.sync && t('project.inside', { sync: opened.sync })}</span>
@@ -207,7 +210,7 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
       </nav>
       <main className="project-main">
         <Notice report={opened.report} />
-        {error && <p role="alert" className="error project-error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         <div className="project-scroll">
           <article>
             <p className="eyebrow">{t('project.preview')}</p>

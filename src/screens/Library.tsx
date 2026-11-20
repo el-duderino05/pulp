@@ -8,6 +8,7 @@ import {
 import { registerCommand, runCommand } from '../app/commands';
 import { friendlyMessage } from '../app/errors';
 import { formatWhen } from '../app/format';
+import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
 import ContextMenu from '../components/ContextMenu';
 import { FolderIcon, LockIcon, PlusIcon, TrashIcon } from '../components/Icons';
@@ -42,6 +43,7 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
     }
   }, [busy]);
 
+  const run = (id: string) => runCommand(id).catch((e) => setError(friendlyMessage(e)));
   const refresh = useCallback(async () => setRows(await listProjects()), []);
 
   useEffect(() => {
@@ -86,9 +88,9 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
           </span>
         </div>
         <div className="row">
-          <button type="button" className="btn btn-white" onClick={() => void runCommand('library.showTrash')}><TrashIcon />{t('library.trash')}</button>
-          <button type="button" className="btn btn-white" disabled={busy} onClick={() => void runCommand('library.openFolder')}>{t('library.openFolder')}</button>
-          <button type="button" className="btn btn-primary" onClick={() => void runCommand('library.newProject')}><PlusIcon />{t('library.newProject')}</button>
+          <button type="button" className="btn btn-white" onClick={() => run('library.showTrash')}><TrashIcon />{t('library.trash')}</button>
+          <button type="button" className="btn btn-white" disabled={busy} onClick={() => run('library.openFolder')}>{t('library.openFolder')}</button>
+          <button type="button" className="btn btn-primary" onClick={() => run('library.newProject')}><PlusIcon />{t('library.newProject')}</button>
         </div>
       </header>
       <main className="page-body">
@@ -101,7 +103,7 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
             <button type="button" className="btn" onClick={() => { setNaming(false); setName(''); }}>{t('common.cancel')}</button>
           </form>
         )}
-        {error && <p role="alert" className="error">{error}</p>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         <ul className="list">
           {rows.map((r) => (
             <li key={r.path}>
