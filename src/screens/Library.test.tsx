@@ -41,6 +41,16 @@ it('lists projects with last opened', async () => {
   expect(within(essay).getByText('Read-only')).toBeTruthy();
 });
 
+it.each([
+  ['/home/x/Pulp', '/home/x/Pulp/Projects'],
+  ['D:\\Pulp', 'D:\\Pulp\\Projects'],
+])('footer path for root %s', async (root, shown) => {
+  mock();
+  render(<Library onOpen={vi.fn()} info={{ root, author: 'a', sync: null, recreated: [] }} />);
+  const note = await screen.findByText(/^Projects are plain folders in/);
+  expect(note.textContent).toBe(t('library.footer', { path: shown }));
+});
+
 it('create is disabled for a blank name', async () => {
   mock();
   render(<Library onOpen={vi.fn()} />);

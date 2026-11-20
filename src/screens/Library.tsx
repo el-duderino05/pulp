@@ -12,6 +12,12 @@ import ContextMenu from '../components/ContextMenu';
 import { FolderIcon, LockIcon, PlusIcon, TrashIcon } from '../components/Icons';
 import LibraryTrash from './LibraryTrash';
 
+// Join with the separator the root already uses, so POSIX roots don't get a backslash.
+export const projectsPath = (root: string) => {
+  const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/';
+  return root.replace(/[\\/]+$/, '') + sep + 'Projects';
+};
+
 export const formatWhen = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -124,7 +130,7 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
             </li>
           ))}
         </ul>
-        {info && <p className="note">{t('library.footer', { path: `${info.root}\\Projects` })}</p>}
+        {info && <p className="note">{t('library.footer', { path: projectsPath(info.root) })}</p>}
       </main>
     </div>
   );
