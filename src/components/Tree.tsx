@@ -92,9 +92,9 @@ export default function Tree(p: {
     } else if (e.key === 'Enter') {
       if (node.kind === 'folder') toggle(node.id);
       else if (!readOnly) act('open');
-    } else if (readOnly) handled = false;
+    } else if (readOnly || node.kind === 'missing') handled = false; // missing items stay until the file returns (D7)
     else if (e.key === 'F2') act('rename');
-    else if (e.key === 'Delete') act('trash');
+    else if (e.key === 'Delete' || e.key === 'Backspace') act('trash'); // Backspace is the Mac delete key
     else if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') setMenuId(node.id);
     else handled = false;
     if (handled) e.preventDefault();
@@ -103,7 +103,6 @@ export default function Tree(p: {
   const menuItems = (r: Row) => {
     const act = (a: TreeAction) => () => onAction(a, r.node.id);
     const trash = { label: t('command.trash'), danger: true, onSelect: act('trash') };
-    if (r.node.kind === 'missing') return [trash];
     return [
       { label: t('command.rename'), onSelect: act('rename') },
       { label: t('command.moveUp'), onSelect: act('moveUp'), disabled: r.index === 0 },
@@ -144,7 +143,7 @@ export default function Tree(p: {
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (readOnly) return;
+                if (readOnly || missing) return;
                 onSelect(node.id);
                 setMenuId(node.id);
               }}

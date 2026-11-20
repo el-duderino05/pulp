@@ -5,6 +5,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, it, vi } from 'vitest';
 import Library from './Library';
 import LibraryTrash from './LibraryTrash';
+import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '../i18n/en';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
@@ -12,9 +13,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 afterEach(() => { cleanup(); clearMocks(); });
 
 const rows = [
-  { id: 'a', name: 'The Harbour', path: 'D:/Pulp/Projects/The Harbour', tooNew: false, lastOpened: '2026-11-12T09:12:00Z', external: false },
-  { id: 'b', name: 'Elsewhere', path: 'E:/Elsewhere', tooNew: false, lastOpened: null, external: true },
-  { id: 'c', name: 'Essay drafts', path: 'D:/Pulp/Projects/Essay drafts', tooNew: true, lastOpened: null, external: false },
+  { id: 'a', name: 'The Harbour', path: 'D:/Pulp/Projects/The Harbour', tooNew: false, lastOpened: '2026-11-12T09:12:00Z', external: false, missing: false, unreadable: false },
+  { id: 'b', name: 'Elsewhere', path: 'E:/Elsewhere', tooNew: false, lastOpened: null, external: true, missing: false, unreadable: false },
+  { id: 'c', name: 'Essay drafts', path: 'D:/Pulp/Projects/Essay drafts', tooNew: true, lastOpened: null, external: false, missing: false, unreadable: false },
 ];
 const opened = { id: 'n', name: 'Novel', path: 'D:/Pulp/Projects/Novel', sync: null, tree: [], report: {}, firstDocument: null };
 
@@ -121,4 +122,39 @@ it('library trash restore and delete-forever confirm first', async () => {
 
   await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
   await waitFor(() => expect(calls.find((c) => c.cmd === 'restore_project')?.args).toEqual({ entry: 'e1' }));
+});
+
+it('a project that cannot be found or read is greyed, unopenable, and removable', async () => {
+  const gone = { id: 'E:/USB/Gone', name: 'Gone', path: 'E:/USB/Gone', tooNew: false, lastOpened: null, external: true, missing: true, unreadable: false };
+  const broken = { id: 'D:/Pulp/Projects/broken', name: 'broken', path: 'D:/Pulp/Projects/broken', tooNew: false, lastOpened: null, external: false, missing: false, unreadable: true };
+  const calls = mock({ list_projects: [gone, broken] });
+  render(<Library onOpen={vi.fn()} />);
+  const goneLi = (await screen.findByText('Gone')).closest('li')!;
+  expect(within(goneLi).getByText(t('library.cantFind', { path: gone.path }))).toBeTruthy();
+  expect(within(goneLi).queryByRole('button', { name: 'Gone' })).toBeNull();
+  const brokenLi = screen.getByText('broken').closest('li')!;
+  expect(within(brokenLi).getByText(t('library.cantRead', { path: broken.path }))).toBeTruthy();
+  expect(calls.some((c) => c.cmd === 'open_project')).toBe(false);
+
+  await userEvent.click(screen.getByRole('button', { name: 'More actions for Gone' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Remove from list' }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === 'forget_external_project')?.args).toEqual({ path: gone.path }));
+});
+
+it('says so when folders were recreated', async () => {
+  mock();
+  render(<Library onOpen={vi.fn()} info={{ root: 'D:/Pulp', author: 'a', sync: null, recreated: ['Projects'] }} />);
+  expect((await screen.findByRole('status')).textContent).toContain(t('report.recreated', { list: 'Projects' }));
+});
+
+it('a non-project folder gets a friendly message', async () => {
+  vi.mocked(open).mockResolvedValue('D:/plain');
+  mockIPC((cmd) => {
+    if (cmd === 'add_external_project') throw { code: 'NotAProject', detail: 'D:/plain is not a Pulp project' };
+    return cmd === 'list_projects' ? rows : null;
+  });
+  render(<Library onOpen={vi.fn()} />);
+  await screen.findByText('The Harbour');
+  await userEvent.click(screen.getByRole('button', { name: 'Open a folder…' }));
+  expect((await screen.findByRole('alert')).textContent).toBe(t('error.NotAProject'));
 });

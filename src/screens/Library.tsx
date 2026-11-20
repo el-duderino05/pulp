@@ -10,6 +10,7 @@ import { friendlyMessage } from '../app/errors';
 import { formatWhen } from '../app/format';
 import ErrorBanner from '../components/ErrorBanner';
 import { t } from '../i18n/en';
+import Notice from '../components/Notice';
 import ContextMenu from '../components/ContextMenu';
 import { FolderIcon, LockIcon, PlusIcon, TrashIcon } from '../components/Icons';
 import LibraryTrash from './LibraryTrash';
@@ -108,14 +109,26 @@ export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) =
             <button type="button" className="btn" onClick={() => { setNaming(false); setName(''); }}>{t('common.cancel')}</button>
           </form>
         )}
+        {info && info.recreated.length > 0 && (
+          <Notice report={{ found: [], missing: [], duplicates: [], copies: [], conflicts: [], recreated: info.recreated }} />
+        )}
         {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         <ul className="list">
           {rows.map((r) => (
-            <li key={r.path}>
+            <li key={r.path} className={r.missing || r.unreadable ? 'unavailable' : undefined}>
               {r.tooNew ? <LockIcon size={22} /> : <FolderIcon size={22} />}
               <div className="text">
-                <button type="button" className="link" disabled={busy} onClick={() => openRow(r)}>{r.name}</button>
-                {r.lastOpened && <span className="meta">{t('library.opened', { when: formatWhen(r.lastOpened) })}</span>}
+                {r.missing || r.unreadable ? (
+                  <>
+                    <span className="name">{r.name}</span>
+                    <span className="meta">{t(r.missing ? 'library.cantFind' : 'library.cantRead', { path: r.path })}</span>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="link" disabled={busy} onClick={() => openRow(r)}>{r.name}</button>
+                    {r.lastOpened && <span className="meta">{t('library.opened', { when: formatWhen(r.lastOpened) })}</span>}
+                  </>
+                )}
               </div>
               {r.tooNew ? (
                 <button type="button" className="badge" onClick={() => openRow(r)}>{t('library.readOnly')}</button>

@@ -2,7 +2,7 @@
 import { t, type StringKey } from '../i18n/en';
 import type { AppError } from './core';
 
-const KNOWN = ['NotALibrary', 'TooNew', 'PermissionDenied', 'Locked', 'DiskFull', 'NotFound', 'Exists'];
+const KNOWN = ['NotALibrary', 'TooNew', 'PermissionDenied', 'Locked', 'DiskFull', 'NotFound', 'Exists', 'NotAProject', 'LibraryExists'];
 
 function isAppError(e: unknown): e is AppError {
   return typeof e === 'object' && e !== null && typeof (e as AppError).code === 'string';

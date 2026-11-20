@@ -567,10 +567,12 @@ mod tests {
             too_new: false,
             last_opened: None,
             external: true,
+            missing: false,
+            unreadable: true,
         };
         assert_eq!(
             v(row),
-            serde_json::json!({"id":"i","name":"n","path":"p","tooNew":false,"lastOpened":null,"external":true})
+            serde_json::json!({"id":"i","name":"n","path":"p","tooNew":false,"lastOpened":null,"external":true,"missing":false,"unreadable":true})
         );
         let report = ReportView::default();
         assert_eq!(

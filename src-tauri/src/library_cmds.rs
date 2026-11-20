@@ -74,6 +74,13 @@ pub fn startup_with(config: &DeviceConfig, default_path: &Path) -> (Startup, Opt
 }
 
 fn create_with(path: &Path, author: &str) -> Result<(Library, LibraryInfo), AppError> {
+    // The interface offers to open it instead.
+    if path.join("library.json").exists() {
+        return Err(AppError {
+            code: ErrorCode::LibraryExists,
+            detail: format!("a Library already exists in {}", path.display()),
+        });
+    }
     let lib = Library::create(path, author)?;
     let i = info(&lib, Vec::new());
     Ok((lib, i))
@@ -118,27 +125,28 @@ pub async fn startup(app: AppHandle, state: State<'_, AppState>) -> Result<Start
 
 #[tauri::command]
 pub async fn create_library(
-    state: State<'_, AppState>,
+    app: AppHandle,
     path: String,
     author: String,
 ) -> Result<LibraryInfo, AppError> {
-    let p = PathBuf::from(path);
-    let q = p.clone();
-    let (lib, i) = blocking(move || create_with(&q, &author)).await??;
-    remember(&state, lib, p)?;
-    Ok(i)
+    run(app, move |s| {
+        let p = PathBuf::from(path);
+        let (lib, i) = create_with(&p, &author)?;
+        remember(s, lib, p)?;
+        Ok(i)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn open_library(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<LibraryInfo, AppError> {
-    let p = PathBuf::from(path);
-    let q = p.clone();
-    let (lib, i) = blocking(move || open_with(&q)).await??;
-    remember(&state, lib, p)?;
-    Ok(i)
+pub async fn open_library(app: AppHandle, path: String) -> Result<LibraryInfo, AppError> {
+    run(app, move |s| {
+        let p = PathBuf::from(path);
+        let (lib, i) = open_with(&p)?;
+        remember(s, lib, p)?;
+        Ok(i)
+    })
+    .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -150,6 +158,10 @@ pub struct ProjectRow {
     pub too_new: bool,
     pub last_opened: Option<String>,
     pub external: bool,
+    /// The folder or its manifest is gone (unplugged drive, renamed folder).
+    pub missing: bool,
+    /// The manifest is there but can't be read.
+    pub unreadable: bool,
 }
 
 fn invalid(detail: impl Into<String>) -> AppError {
@@ -163,38 +175,102 @@ fn parse_id(s: &str) -> Result<Id, AppError> {
     Id::parse(s).map_err(|e| invalid(e.to_string()))
 }
 
-/// A row for the project in `path`, read from its manifest alone so that a
-/// project needing a newer Pulp still shows up. `None` when it has no
-/// readable manifest.
-fn row_for(state: &AppState, path: &Path, external: bool) -> Option<ProjectRow> {
-    let bytes = std::fs::read(path.join(MANIFEST_FILE)).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let id = v.get("id")?.as_str()?.to_string();
-    let last_opened = state
+fn last_opened(state: &AppState, id: &str) -> Option<String> {
+    state
         .device
         .lock()
         .expect("device lock")
         .last_opened
-        .get(&id)
-        .cloned();
-    Some(ProjectRow {
-        name: v.get("name")?.as_str()?.to_string(),
-        too_new: v.get("minReader").and_then(|n| n.as_u64()) > Some(READER_VERSION.into()),
-        path: path.to_string_lossy().into_owned(),
-        last_opened,
+        .get(id)
+        .cloned()
+}
+
+/// A row for the project in `path`, read from its manifest alone so that a
+/// project needing a newer Pulp still shows up. A project that can't be found
+/// or read still gets a row, flagged, so a writer can see it and (if external)
+/// remove it.
+fn row_for(state: &AppState, path: &Path, external: bool) -> ProjectRow {
+    let shown = path.to_string_lossy().into_owned();
+    let flagged = |name: String, missing: bool| ProjectRow {
+        id: shown.clone(),
+        name,
+        path: shown.clone(),
+        too_new: false,
+        last_opened: None,
         external,
+        missing,
+        unreadable: !missing,
+    };
+    let fallback = || {
+        path.file_name()
+            .map_or_else(|| shown.clone(), |n| n.to_string_lossy().into_owned())
+    };
+    let manifest = path.join(MANIFEST_FILE);
+    if !manifest.exists() {
+        return flagged(fallback(), true);
+    }
+    let parsed = std::fs::read(&manifest)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| {
+            Some((
+                v.get("id")?.as_str()?.to_string(),
+                v.get("name")?.as_str()?.to_string(),
+                v.get("minReader").and_then(|n| n.as_u64()) > Some(READER_VERSION.into()),
+            ))
+        });
+    let Some((id, name, too_new)) = parsed else {
+        return flagged(fallback(), false);
+    };
+    ProjectRow {
+        last_opened: last_opened(state, &id),
         id,
-    })
+        name,
+        path: shown,
+        too_new,
+        external,
+        missing: false,
+        unreadable: false,
+    }
 }
 
 pub fn list_projects_with(state: &AppState) -> Result<Vec<ProjectRow>, AppError> {
     let mut rows: Vec<ProjectRow> = with_library(state, |lib| {
         let projects = lib.root.join("Projects");
-        Ok(lib
-            .list_projects()?
+        let summaries = lib.list_projects()?;
+        let mut rows: Vec<ProjectRow> = summaries
             .iter()
-            .filter_map(|p| row_for(state, &projects.join(&p.folder), false))
-            .collect())
+            .map(|p| {
+                let id = p.id.to_string();
+                ProjectRow {
+                    last_opened: last_opened(state, &id),
+                    id,
+                    name: p.name.clone(),
+                    path: projects.join(&p.folder).to_string_lossy().into_owned(),
+                    too_new: p.too_new,
+                    external: false,
+                    missing: false,
+                    unreadable: false,
+                }
+            })
+            .collect();
+        // Project folders the core could not summarise (manifest unreadable).
+        let known: Vec<&str> = summaries.iter().map(|p| p.folder.as_str()).collect();
+        let mut folders: Vec<_> = std::fs::read_dir(&projects)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().join(MANIFEST_FILE).exists())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|f| !f.starts_with('.') && !known.contains(&f.as_str()))
+            .collect();
+        folders.sort();
+        rows.extend(
+            folders
+                .iter()
+                .map(|f| row_for(state, &projects.join(f), false)),
+        );
+        Ok(rows)
     })?;
     let external = state
         .device
@@ -202,7 +278,7 @@ pub fn list_projects_with(state: &AppState) -> Result<Vec<ProjectRow>, AppError>
         .expect("device lock")
         .external_projects
         .clone();
-    rows.extend(external.iter().filter_map(|p| row_for(state, p, true)));
+    rows.extend(external.iter().map(|p| row_for(state, p, true)));
     Ok(rows)
 }
 
@@ -223,8 +299,13 @@ pub fn create_project_with(state: &AppState, name: &str) -> Result<OpenedProject
 }
 
 pub fn add_external_with(state: &AppState, path: &Path) -> Result<ProjectRow, AppError> {
-    let row = row_for(state, path, true)
-        .ok_or_else(|| invalid(format!("{} is not a Pulp project", path.display())))?;
+    let row = row_for(state, path, true);
+    if row.missing || row.unreadable {
+        return Err(AppError {
+            code: ErrorCode::NotAProject,
+            detail: format!("{} is not a Pulp project", path.display()),
+        });
+    }
     update_device(state, |d| {
         if !d.external_projects.iter().any(|p| p == path) {
             d.external_projects.push(path.to_path_buf());
@@ -261,8 +342,7 @@ pub fn trash_project_with(state: &AppState, path: &Path) -> Result<(), AppError>
 pub fn restore_project_with(state: &AppState, entry: &str) -> Result<ProjectRow, AppError> {
     let entry = parse_id(entry)?;
     let path = with_library(state, |lib| Ok(lib.restore_project(&entry)?))?;
-    row_for(state, &path, false)
-        .ok_or_else(|| invalid(format!("{} is not a Pulp project", path.display())))
+    Ok(row_for(state, &path, false))
 }
 
 #[tauri::command]
@@ -378,7 +458,7 @@ mod project_list_tests {
         std::fs::create_dir_all(&plain).unwrap();
         assert_eq!(
             add_external_with(&state, &plain).unwrap_err().code,
-            ErrorCode::Invalid
+            ErrorCode::NotAProject
         );
         // A project outside the Library is added as external, then listed.
         let ext = dir.path().join("ext");
@@ -399,5 +479,49 @@ mod project_list_tests {
         trash_project_with(&state, Path::new(&o.path)).unwrap();
         assert!(list_projects_with(&state).unwrap().is_empty());
         assert!(state.projects.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unreachable_and_unreadable_projects_still_get_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let o = create_project_with(&state, "Novel").unwrap();
+
+        // An external project whose folder has gone is listed, flagged, and can be forgotten.
+        let ext = dir.path().join("usb").join("Elsewhere");
+        std::fs::create_dir_all(&ext).unwrap();
+        pulp_core::project::Project::create(pulp_core::storage::FsStorage::new(&ext), "Out")
+            .unwrap();
+        add_external_with(&state, &ext).unwrap();
+        std::fs::remove_dir_all(&ext).unwrap();
+
+        // A Library project whose manifest is garbage is listed, flagged.
+        let bad = dir.path().join("Pulp").join("Projects").join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join(MANIFEST_FILE), b"not json").unwrap();
+
+        let rows = list_projects_with(&state).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter()
+                .any(|r| r.id == o.id && !r.missing && !r.unreadable)
+        );
+        let gone = rows.iter().find(|r| r.external).unwrap();
+        assert!(gone.missing && !gone.unreadable);
+        assert_eq!(gone.name, "Elsewhere");
+        let broken = rows.iter().find(|r| r.name == "broken").unwrap();
+        assert!(broken.unreadable && !broken.missing && !broken.external);
+
+        forget_external_with(&state, &ext).unwrap();
+        assert_eq!(list_projects_with(&state).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn creating_over_an_existing_library_has_its_own_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Pulp");
+        create_with(&root, "Ana").unwrap();
+        let err = create_with(&root, "Ana").unwrap_err();
+        assert_eq!(err.code, ErrorCode::LibraryExists);
     }
 }

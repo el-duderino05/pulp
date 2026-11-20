@@ -14,6 +14,8 @@ pub enum ErrorCode {
     NotFound,
     Exists,
     Invalid,
+    LibraryExists,
+    NotAProject,
     Other,
 }
 

@@ -127,6 +127,30 @@ it("missing items are greyed and can't be opened", async () => {
   expect(sent(calls, 'read_document').some((c) => c.args.id === 'm1')).toBe(false);
 });
 
+it('missing items have no menu and ignore rename and trash keys', async () => {
+  const calls = mock();
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await screen.findByRole('heading', { name: 'Title d1' });
+  const m = item(t('project.missing'));
+  await user.pointer({ keys: '[MouseRight]', target: m });
+  expect(screen.queryByRole('menu')).toBeNull();
+  m.focus();
+  await user.keyboard('{F2}{Delete}{Backspace}');
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(sent(calls, 'trash_node')).toEqual([]);
+});
+
+it('Backspace trashes the focused item like Delete (the Mac delete key)', async () => {
+  const calls = mock({ trash_node: () => 'e1' });
+  const user = userEvent.setup();
+  render(<Project opened={opened()} onBack={vi.fn()} />);
+  await screen.findByRole('heading', { name: 'Title d1' });
+  item('Chapter 2').focus();
+  await user.keyboard('{Backspace}');
+  await waitFor(() => expect(sent(calls, 'trash_node')[0].args).toEqual({ project: 'p1', id: 'd2' }));
+});
+
 it('notice shows the report counts and details', async () => {
   mock();
   const report = { ...noReport, found: ['Loose.md'], recreated: ['Notes', 'Extra'] };

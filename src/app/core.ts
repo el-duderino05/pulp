@@ -27,6 +27,8 @@ export type ProjectRow = {
   tooNew: boolean;
   lastOpened: string | null;
   external: boolean;
+  missing: boolean;
+  unreadable: boolean;
 };
 
 export type OpenedProject = {
