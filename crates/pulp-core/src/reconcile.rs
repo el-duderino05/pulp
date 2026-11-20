@@ -663,6 +663,9 @@ mod tests {
         fn exists(&self, p: &RelPath) -> bool {
             self.0.exists(p)
         }
+        fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.0.discard(p)
+        }
     }
 
     #[test]

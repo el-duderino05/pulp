@@ -655,6 +655,9 @@ mod tests {
         fn exists(&self, p: &RelPath) -> bool {
             self.inner.exists(p)
         }
+        fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.inner.discard(p)
+        }
     }
 
     fn flaky_setup() -> (tempfile::TempDir, Project<Flaky>, Id) {
@@ -1177,6 +1180,9 @@ mod tests {
                 .list(&parent)
                 .map(|v| v.iter().any(|e| same_path(&e.name, last)))
                 .unwrap_or(false)
+        }
+        fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.0.discard(p)
         }
     }
 

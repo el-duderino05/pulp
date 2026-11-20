@@ -322,6 +322,32 @@ impl<S: Storage> Project<S> {
         Ok(out)
     }
 
+    /// Sends one trash entry to the computer's trash for good. Unknown: `NotFound`.
+    pub fn delete_from_trash(&mut self, entry: &Id) -> Result<(), ProjectError> {
+        let dir = entry_dir(entry);
+        if !self.storage.exists(&dir) {
+            return Err(ProjectError::NotFound(entry.clone()));
+        }
+        Ok(self.storage.discard(&dir)?)
+    }
+
+    /// Sends every trash entry to the computer's trash; returns how many.
+    pub fn empty_trash(&mut self) -> Result<usize, ProjectError> {
+        let names = match self.storage.list(&trash_root()) {
+            Ok(v) => v,
+            Err(e) if e.cause() == ErrorCause::NotFound => return Ok(0),
+            Err(e) => return Err(e.into()),
+        };
+        let mut count = 0;
+        for e in names.iter().filter(|e| e.is_dir) {
+            if let Ok(id) = Id::parse(&e.name) {
+                self.storage.discard(&entry_dir(&id))?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     /// Puts a trashed item or folder back, in its folder and position when
     /// they still exist, else at the top level. Never overwrites.
     pub fn restore_from_trash(&mut self, entry: &Id) -> Result<(), ProjectError> {
@@ -585,6 +611,9 @@ mod tests {
         }
         fn exists(&self, p: &RelPath) -> bool {
             self.inner.exists(p)
+        }
+        fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.inner.discard(p)
         }
     }
 
