@@ -66,6 +66,21 @@ it('delete forever and empty trash confirm first', async () => {
   await waitFor(() => expect(calls.some((c) => c.cmd === 'empty_project_trash')).toBe(true));
 });
 
+it('the sidebar tree is read-only: no menu, Delete does nothing', async () => {
+  const calls = mock();
+  const user = userEvent.setup();
+  render(<ProjectTrash project="p1" name="The Harbour" onBack={vi.fn()} />);
+  const item = await screen.findByRole('treeitem', { name: /Manuscript/ });
+  item.focus();
+  await user.keyboard('{Shift>}{F10}{/Shift}');
+  expect(screen.queryByRole('menu')).toBeNull();
+  await user.pointer({ keys: '[MouseRight]', target: item });
+  expect(screen.queryByRole('menu')).toBeNull();
+  await user.keyboard('{F2}{Delete}');
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(calls.some((c) => c.cmd === 'trash_node' || c.cmd === 'rename_node')).toBe(false);
+});
+
 it('a failed load shows the error, not the empty message', async () => {
   mockIPC((cmd) => {
     if (cmd === 'list_project_trash') throw { code: 'Other', detail: 'boom' };

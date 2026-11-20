@@ -24,8 +24,9 @@ export default function Tree(p: {
   onAction: (action: TreeAction, id: string) => void;
   renamingId?: string | null;
   onRename?: (id: string, title: string | null) => void;
+  readOnly?: boolean; // no menu, rename, trash or open; navigation and expand/collapse stay
 }) {
-  const { nodes, selectedId, onSelect, onAction, renamingId = null, onRename } = p;
+  const { nodes, selectedId, onSelect, onAction, renamingId = null, onRename, readOnly = false } = p;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [menuId, setMenuId] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -90,8 +91,9 @@ export default function Tree(p: {
       else if (parent) go(parent);
     } else if (e.key === 'Enter') {
       if (node.kind === 'folder') toggle(node.id);
-      else act('open');
-    } else if (e.key === 'F2') act('rename');
+      else if (!readOnly) act('open');
+    } else if (readOnly) handled = false;
+    else if (e.key === 'F2') act('rename');
     else if (e.key === 'Delete') act('trash');
     else if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') setMenuId(node.id);
     else handled = false;
@@ -138,10 +140,11 @@ export default function Tree(p: {
               onClick={() => {
                 onSelect(node.id);
                 if (folder) toggle(node.id);
-                else onAction('open', node.id);
+                else if (!readOnly) onAction('open', node.id);
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
+                if (readOnly) return;
                 onSelect(node.id);
                 setMenuId(node.id);
               }}

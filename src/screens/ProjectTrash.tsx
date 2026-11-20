@@ -62,7 +62,7 @@ export default function ProjectTrash({ project, name, onBack }: { project: strin
           <span className="project-name">{name}</span>
         </div>
         <div className="project-tree">
-          <Tree nodes={tree} selectedId={null} onSelect={noop} onAction={noop} renamingId={null} onRename={noop} />
+          <Tree nodes={tree} selectedId={null} onSelect={noop} onAction={noop} renamingId={null} onRename={noop} readOnly />
         </div>
         <div className="project-foot">
           <button type="button" className="trash-link trash-link-current" aria-current="page">
