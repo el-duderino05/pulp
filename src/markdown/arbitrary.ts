@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0
-/// <reference types="node" />
 // fast-check generators for the round-trip property tests.
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';

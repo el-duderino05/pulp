@@ -1,0 +1,43 @@
+:root {
+  --ground: #f7f5f0;
+  --panel: #efece5;
+  --card: #ffffff;
+  --ink: #1f1d1a;
+  --muted: #5e5a53;
+  --border: #ddd8ce;
+  --input-border: #b9b3a7;
+  --accent: #2f5d62;
+  --accent-tint: #dce6e4;
+  --danger: #8a2a1f;
+  --notice-bg: #e4ecf4;
+  --notice-text: #1c3550;
+  --badge-bg: #f6ebd3;
+  --badge-text: #6b4a12;
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-doc: "Gelasio", Georgia, serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+}
+
+button,
+input {
+  font: inherit;
+  min-height: 36px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

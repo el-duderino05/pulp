@@ -1,52 +1,38 @@
 // SPDX-License-Identifier: MPL-2.0
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from "react";
+import { startup, type Startup } from "./app/core";
+import { friendlyMessage } from "./app/errors";
+import { handleShortcut } from "./app/commands";
+import { t } from "./i18n/en";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+// Stubs until Tasks 8-11 replace them with the real screens.
+const Setup = ({ defaultPath }: { defaultPath: string }) => <main>Setup: {defaultPath}</main>;
+const LocateLibrary = ({ path }: { path: string }) => <main>{t("library.missing", { path })}</main>;
+const Library = () => <main>Library</main>;
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+export default function App() {
+  const [s, setS] = useState<Startup | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    startup().then(setS, (e) => setErr(friendlyMessage(e)));
+    const onKey = (e: KeyboardEvent) => {
+      if (handleShortcut(e)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  if (err) return <main role="alert">{err}</main>;
+  if (!s) return null;
+  switch (s.state) {
+    case "firstLaunch":
+      return <Setup defaultPath={s.defaultPath} />;
+    case "libraryMissing":
+      return <LocateLibrary path={s.path} />;
+    case "ready":
+      return <Library />;
+    case "failed":
+      return <main role="alert">{friendlyMessage(s.error)}</main>;
   }
-
-  return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
-  );
 }
-
-export default App;
