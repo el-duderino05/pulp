@@ -51,11 +51,11 @@ struct Wire {
     folder_node: Option<FolderNode>,
 }
 
-fn trash_root() -> RelPath {
+pub(crate) fn trash_root() -> RelPath {
     RelPath::root().join(TRASH_DIR)
 }
 
-fn entry_dir(entry: &Id) -> RelPath {
+pub(crate) fn entry_dir(entry: &Id) -> RelPath {
     trash_root().join(entry.as_str())
 }
 
@@ -85,7 +85,7 @@ fn is_stored_name(name: &str) -> bool {
 }
 
 /// Reads and checks one entry folder. `None` for anything unusable.
-fn load_entry<S: Storage>(storage: &S, entry_id: &Id) -> Option<TrashEntry> {
+pub(crate) fn load_entry<S: Storage>(storage: &S, entry_id: &Id) -> Option<TrashEntry> {
     let bytes = storage.read(&entry_dir(entry_id).join(ENTRY_FILE)).ok()?;
     let wire: Wire = serde_json::from_slice(&bytes).ok()?;
     if wire.format == 0 || wire.format > FORMAT_VERSION || wire.deleted_at.is_empty() {
@@ -191,7 +191,7 @@ pub fn store_in_trash<S: Storage>(
     }
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 

@@ -61,11 +61,14 @@ impl LibrarySettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     pub folder: String,
     pub name: String,
     pub id: Id,
+    /// The project needs a newer Pulp than this one.
+    pub too_new: bool,
 }
 
 #[derive(Debug)]
@@ -74,7 +77,7 @@ pub struct Library {
     pub settings: LibrarySettings,
 }
 
-fn rel(name: &str) -> RelPath {
+pub(crate) fn rel(name: &str) -> RelPath {
     RelPath::root().join(name)
 }
 
@@ -203,14 +206,15 @@ impl Library {
                 continue;
             };
             let summary = match Manifest::load(&text) {
-                Ok(m) => Some((m.name, m.id)),
-                Err(_) => raw_name_and_id(&text),
+                Ok(m) => Some((m.name, m.id, m.min_reader)),
+                Err(_) => raw_summary(&text),
             };
-            if let Some((name, id)) = summary {
+            if let Some((name, id, min_reader)) = summary {
                 out.push(ProjectSummary {
                     folder: e.name,
                     name,
                     id,
+                    too_new: min_reader > READER_VERSION,
                 });
             }
         }
@@ -218,13 +222,19 @@ impl Library {
     }
 }
 
-/// Reads `name` and `id` straight from the raw JSON of a manifest that
-/// `Manifest::load` refused.
-fn raw_name_and_id(text: &str) -> Option<(String, Id)> {
+/// Reads `name`, `id` and `minReader` straight from the raw JSON of a
+/// manifest that `Manifest::load` refused (a missing `minReader` counts as 0).
+fn raw_summary(text: &str) -> Option<(String, Id, u32)> {
     let v: Value = serde_json::from_str(text).ok()?;
     let name = v.get("name")?.as_str()?.to_string();
     let id = Id::parse(v.get("id")?.as_str()?).ok()?;
-    Some((name, id))
+    let min_reader = v.get("minReader").and_then(Value::as_u64).unwrap_or(0);
+    Some((name, id, u32::try_from(min_reader).unwrap_or(u32::MAX)))
+}
+
+/// Name and id of a project manifest, readable or not (for the trash list).
+pub(crate) fn name_and_id(text: &str) -> Option<(String, Id)> {
+    raw_summary(text).map(|(n, i, _)| (n, i))
 }
 
 #[cfg(test)]

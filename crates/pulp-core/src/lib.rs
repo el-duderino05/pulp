@@ -6,6 +6,7 @@ pub mod history;
 pub mod id;
 pub mod items;
 pub mod library;
+pub mod library_trash;
 pub mod manifest;
 pub mod project;
 pub mod reconcile;
