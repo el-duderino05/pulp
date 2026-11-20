@@ -18,6 +18,8 @@ pub struct AppState {
     /// Open projects by project id. Each has its own lock, so work on one
     /// project never waits for another.
     pub projects: Mutex<HashMap<String, OpenProject>>,
+    /// Held while a project is being opened.
+    pub opening: Mutex<()>,
 }
 
 /// Runs `f` on the one open project `id`, holding only that project's lock.
@@ -83,5 +85,6 @@ pub(crate) fn test_state(dir: &std::path::Path) -> AppState {
         device: Mutex::new(DeviceConfig::default()),
         library: Mutex::new(Some(Library::create(&dir.join("Pulp"), "Ana").unwrap())),
         projects: Mutex::new(HashMap::new()),
+        opening: Mutex::new(()),
     }
 }

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-use crate::error::AppError;
+use crate::error::{AppError, ErrorCode};
 use crate::state::{AppState, run, update_device, with_project};
 use crate::sync::sync_service;
 use pulp_core::header::{DocKind, parse_markdown_item};
 use pulp_core::id::Id;
 use pulp_core::manifest::Node;
-use pulp_core::project::{Project, ReconcileReport};
+use pulp_core::project::{MANIFEST_FILE, Project, ReconcileReport};
 use pulp_core::storage::{FsStorage, RelPath, Storage};
 use pulp_core::tree::{NodeKind, TreeNode};
 use serde::Serialize;
@@ -54,15 +54,21 @@ pub struct DocumentView {
 }
 
 fn title_of<S: Storage>(p: &Project<S>, id: &Id) -> String {
-    p.read_item(id)
-        .map_or_else(|_| id.to_string(), |i| i.header.title)
+    p.read_item(id).map_or_else(
+        |_| format!("Untitled item (…{})", id.short()),
+        |i| i.header.title,
+    )
 }
 
 fn view_of(p: &Project<FsStorage>, r: &ReconcileReport) -> ReportView {
     let path = |x: &RelPath| x.as_str().to_string();
     ReportView {
         found: r.found.iter().map(|id| title_of(p, id)).collect(),
-        missing: r.missing.iter().map(Id::to_string).collect(),
+        missing: r
+            .missing
+            .iter()
+            .map(|id| format!("Missing item (…{})", id.short()))
+            .collect(),
         duplicates: r.duplicates_trashed.iter().map(path).collect(),
         copies: r.copies_reassigned.iter().map(|(x, _)| path(x)).collect(),
         conflicts: r
@@ -87,26 +93,61 @@ pub fn first_document(tree: &[TreeNode]) -> Option<Id> {
     })
 }
 
-/// Opens (or reopens) the project in `path`, keeps it for the session and
-/// records when it was opened. A project that needs a newer Pulp is refused.
-pub fn open_project_with(state: &AppState, path: &Path) -> Result<OpenedProject, AppError> {
-    let (project, report) = Project::open(FsStorage::new(path))?;
-    let id = project.manifest().id.to_string();
+fn describe(path: &Path, project: &Project<FsStorage>, report: ReportView) -> OpenedProject {
     let tree = project.tree();
-    let opened = OpenedProject {
-        id: id.clone(),
+    OpenedProject {
+        id: project.manifest().id.to_string(),
         name: project.manifest().name.clone(),
         path: path.to_string_lossy().into_owned(),
         sync: sync_service(path).map(str::to_string),
         first_document: first_document(&tree),
-        report: view_of(&project, &report),
+        report,
         tree,
+    }
+}
+
+/// The id in the project's manifest, read without reconciling anything.
+fn manifest_id(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path.join(MANIFEST_FILE)).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("id")?.as_str().map(str::to_string)
+}
+
+/// Opens the project in `path`, keeps it for the session and records when it
+/// was opened. A project that needs a newer Pulp is refused. A project that
+/// is already open keeps its session (and its lock): reopening returns its
+/// current state with an empty report and never reconciles a second time.
+pub fn open_project_with(state: &AppState, path: &Path) -> Result<OpenedProject, AppError> {
+    // One open at a time, so two opens of the same path cannot both reconcile.
+    let _opening = state.opening.lock().expect("opening lock");
+    let existing = manifest_id(path).and_then(|id| {
+        state
+            .projects
+            .lock()
+            .expect("projects lock")
+            .get(&id)
+            .cloned()
+    });
+    let (id, opened) = match existing {
+        Some(session) => {
+            let p = session.lock().expect("project lock");
+            (
+                p.manifest().id.to_string(),
+                describe(path, &p, ReportView::default()),
+            )
+        }
+        None => {
+            let (project, report) = Project::open(FsStorage::new(path))?;
+            let id = project.manifest().id.to_string();
+            let opened = describe(path, &project, view_of(&project, &report));
+            state
+                .projects
+                .lock()
+                .expect("projects lock")
+                .insert(id.clone(), Arc::new(Mutex::new(project)));
+            (id, opened)
+        }
     };
-    state
-        .projects
-        .lock()
-        .expect("projects lock")
-        .insert(id.clone(), Arc::new(Mutex::new(project)));
     // The project is open either way; a failed save only loses "last opened".
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let _ = update_device(state, |d| {
@@ -166,6 +207,24 @@ pub fn trash_node_with(state: &AppState, project: &str, id: &Id) -> Result<Id, A
             p.trash_item(id)
         }
     })
+}
+
+/// Documents only; a folder id is refused and nothing changes (D2).
+pub fn move_document_with(
+    state: &AppState,
+    project: &str,
+    id: &Id,
+    folder: Option<&Id>,
+    index: usize,
+) -> Result<(), AppError> {
+    let is_folder = with_project(state, project, |p| Ok(p.manifest().folder(id).is_some()))?;
+    if is_folder {
+        return Err(AppError {
+            code: ErrorCode::Invalid,
+            detail: "folders can be reordered but not moved".into(),
+        });
+    }
+    with_project(state, project, |p| p.move_item(id, folder, index))
 }
 
 fn count_items(nodes: &[Node]) -> usize {
@@ -292,7 +351,7 @@ pub async fn move_document(
     index: usize,
 ) -> Result<(), AppError> {
     run(app, move |s| {
-        with_project(s, &project, |p| p.move_item(&id, folder.as_ref(), index))
+        move_document_with(s, &project, &id, folder.as_ref(), index)
     })
     .await
 }
@@ -363,7 +422,6 @@ mod tests {
     use crate::error::ErrorCode;
     use crate::library_cmds::create_project_with;
     use crate::state::test_state;
-    use pulp_core::project::MANIFEST_FILE;
     use pulp_core::tree::NodeKind;
 
     fn titles(nodes: &[TreeNode]) -> Vec<&str> {
@@ -519,37 +577,140 @@ mod tests {
             v(&report),
             serde_json::json!({"found":[],"missing":[],"duplicates":[],"copies":[],"conflicts":[],"recreated":[]})
         );
+        let (fid, did, mid) = (Id::new(), Id::new(), Id::new());
+        let tree = vec![TreeNode {
+            id: fid.clone(),
+            title: "Manuscript".into(),
+            kind: NodeKind::Folder,
+            children: vec![
+                TreeNode {
+                    id: did.clone(),
+                    title: "Chapter 1".into(),
+                    kind: NodeKind::Document,
+                    children: Vec::new(),
+                },
+                TreeNode {
+                    id: mid.clone(),
+                    title: String::new(),
+                    kind: NodeKind::Missing,
+                    children: Vec::new(),
+                },
+            ],
+        }];
         let opened = OpenedProject {
             id: "i".into(),
             name: "n".into(),
             path: "p".into(),
             sync: None,
-            tree: Vec::new(),
+            tree,
             report,
-            first_document: None,
+            first_document: Some(did.clone()),
         };
         assert_eq!(
             v(opened),
-            serde_json::json!({"id":"i","name":"n","path":"p","sync":null,"tree":[],"report":v(ReportView::default()),"firstDocument":null})
+            serde_json::json!({
+                "id": "i", "name": "n", "path": "p", "sync": null,
+                "tree": [{"id": fid.as_str(), "title": "Manuscript", "kind": "folder", "children": [
+                    {"id": did.as_str(), "title": "Chapter 1", "kind": "document", "children": []},
+                    {"id": mid.as_str(), "title": "", "kind": "missing", "children": []}
+                ]}],
+                "report": v(ReportView::default()),
+                "firstDocument": did.as_str()
+            })
         );
+        let eid = Id::new();
         let t = TrashRow {
-            entry_id: Id::new(),
+            entry_id: eid.clone(),
             title: "t".into(),
-            is_folder: false,
-            item_count: 1,
-            from: None,
-            deleted_at: "x".into(),
+            is_folder: true,
+            item_count: 3,
+            from: Some("Manuscript".into()),
+            deleted_at: "2026-01-01T00:00:00Z".into(),
         };
-        let j = v(t);
-        for k in [
-            "entryId",
-            "title",
-            "isFolder",
-            "itemCount",
-            "from",
-            "deletedAt",
-        ] {
-            assert!(j.get(k).is_some(), "{k}");
-        }
+        assert_eq!(
+            v(t),
+            serde_json::json!({"entryId": eid.as_str(), "title": "t", "isFolder": true,
+                "itemCount": 3, "from": "Manuscript", "deletedAt": "2026-01-01T00:00:00Z"})
+        );
+        assert_eq!(
+            v(DocumentView {
+                title: "t".into(),
+                body: "b".into()
+            }),
+            serde_json::json!({"title": "t", "body": "b"})
+        );
+        let info = crate::library_cmds::LibraryInfo {
+            root: "/r".into(),
+            author: "Ana".into(),
+            sync: None,
+            recreated: vec!["Inbox".into()],
+        };
+        assert_eq!(
+            v(Startup::Ready { library: info }),
+            serde_json::json!({"state": "ready", "library": {
+                "root": "/r", "author": "Ana", "sync": null, "recreated": ["Inbox"]}})
+        );
+        let error = AppError {
+            code: ErrorCode::NotALibrary,
+            detail: "d".into(),
+        };
+        assert_eq!(
+            v(Startup::Failed { error }),
+            serde_json::json!({"state": "failed", "error": {"code": "NotALibrary", "detail": "d"}})
+        );
+    }
+
+    #[test]
+    fn reopening_keeps_the_same_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let o = create_project_with(&state, "Novel").unwrap();
+        let first = state.projects.lock().unwrap().get(&o.id).cloned().unwrap();
+        let folder = o.tree[0].id.clone();
+        create_document_with(&state, &o.id, &folder, "Scene").unwrap();
+
+        let again = open_project_with(&state, Path::new(&o.path)).unwrap();
+        let second = state.projects.lock().unwrap().get(&o.id).cloned().unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(again.tree[0].children.len(), 2);
+        assert_eq!(again.report, ReportView::default());
+
+        // Concurrent opens of the same path still end with one session.
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| open_project_with(&state, Path::new(&o.path)).unwrap());
+            }
+        });
+        let third = state.projects.lock().unwrap().get(&o.id).cloned().unwrap();
+        assert!(Arc::ptr_eq(&first, &third));
+        assert_eq!(state.projects.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn moving_a_folder_is_refused_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let o = create_project_with(&state, "Novel").unwrap();
+        let sub = create_folder_with(&state, &o.id, Some(&o.tree[0].id), "Part").unwrap();
+        let before = with_project(&state, &o.id, |p| Ok(p.tree())).unwrap();
+        let err = move_document_with(&state, &o.id, &sub, None, 0).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Invalid);
+        assert_eq!(
+            with_project(&state, &o.id, |p| Ok(p.tree())).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn missing_items_read_as_text() {
+        let r = ReconcileReport {
+            missing: vec![Id::new()],
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let o = create_project_with(&state, "N").unwrap();
+        let v = with_project(&state, &o.id, |p| Ok(view_of(p, &r))).unwrap();
+        assert!(v.missing[0].starts_with("Missing item (…"));
     }
 }

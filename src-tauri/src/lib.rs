@@ -21,6 +21,7 @@ pub fn run() {
                 config_path,
                 library: Mutex::new(None),
                 projects: Default::default(),
+                opening: Default::default(),
             });
             Ok(())
         })
