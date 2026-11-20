@@ -82,6 +82,8 @@ input {
 .back { background: none; border: none; color: var(--accent); font-size: 13px; padding: 0; min-height: 0; text-align: left; cursor: pointer; }
 .trash-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .trash-btn { min-height: 40px; }
+.trash-main { padding: 40px 48px; gap: 20px; }
+.trash-link-current { background: var(--accent-tint); border-radius: 8px; padding: 0 8px; font-weight: 600; }
 .menu { position: absolute; right: 20px; top: 48px; z-index: 10; list-style: none; margin: 0; padding: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / 12%); min-width: 180px; }
 .menu button { width: 100%; text-align: left; border: none; background: none; padding: 0 12px; border-radius: 6px; }
 .menu button:hover, .menu button:focus-visible { background: var(--accent-tint); }

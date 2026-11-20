@@ -4,6 +4,7 @@ import {
   deleteLibraryTrashEntry, emptyLibraryTrash, listLibraryTrash, restoreProject, type LibraryTrashEntry,
 } from '../app/core';
 import { friendlyMessage } from '../app/errors';
+import { formatWhen } from '../app/format';
 import { t } from '../i18n/en';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { FolderIcon } from '../components/Icons';
@@ -68,7 +69,7 @@ export default function LibraryTrash({ onBack }: { onBack: () => void }) {
                 <FolderIcon size={20} />
                 <div className="text">
                   <span className="name">{e.name}</span>
-                  <span className="meta">{t('trash.deleted', { when: new Date(e.deletedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) })}</span>
+                  <span className="meta">{t('trash.deleted', { when: formatWhen(e.deletedAt) })}</span>
                 </div>
                 <button type="button" className="btn btn-primary trash-btn" disabled={busy} onClick={() => void act(async () => { await restoreProject(e.entryId); await refresh(); })}>
                   {t('trash.restore')}

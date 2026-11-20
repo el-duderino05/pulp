@@ -7,6 +7,7 @@ import {
 } from '../app/core';
 import { registerCommand, runCommand } from '../app/commands';
 import { friendlyMessage } from '../app/errors';
+import { formatWhen } from '../app/format';
 import { t } from '../i18n/en';
 import ContextMenu from '../components/ContextMenu';
 import { FolderIcon, LockIcon, PlusIcon, TrashIcon } from '../components/Icons';
@@ -17,9 +18,6 @@ export const projectsPath = (root: string) => {
   const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/';
   return root.replace(/[\\/]+$/, '') + sep + 'Projects';
 };
-
-export const formatWhen = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 export default function Library({ onOpen, info }: { onOpen: (p: OpenedProject) => void; info?: LibraryInfo }) {
   const [rows, setRows] = useState<ProjectRow[]>([]);

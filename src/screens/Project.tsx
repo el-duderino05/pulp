@@ -12,6 +12,7 @@ import { TrashIcon } from '../components/Icons';
 import MoveDialog, { foldersOf } from '../components/MoveDialog';
 import Notice from '../components/Notice';
 import Tree, { type TreeAction } from '../components/Tree';
+import ProjectTrash from './ProjectTrash';
 
 type Found = { node: TreeNode; parent: TreeNode | null; siblings: TreeNode[]; index: number };
 function find(nodes: TreeNode[], id: string | null, parent: TreeNode | null = null): Found | null {
@@ -178,14 +179,7 @@ export default function Project({ opened, onBack }: { opened: OpenedProject; onB
   };
 
   if (view === 'trash') {
-    // Stub: Task 11 builds the real project trash view.
-    return (
-      <main className="page-body">
-        <button type="button" className="back" onClick={() => { setView('project'); void act(refresh); }}>{t('project.back')}</button>
-        <h1>{t('trash.title')}</h1>
-        <p className="note">{t('project.trashStub')}</p>
-      </main>
-    );
+    return <ProjectTrash project={pid} name={opened.name} onBack={() => { setView('project'); void act(refresh); }} />;
   }
 
   const paragraphs = doc ? doc.body.split(/\n\s*\n/).filter((x) => x.trim()) : [];
