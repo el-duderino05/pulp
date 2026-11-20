@@ -8,16 +8,19 @@ This spec only adds what the master spec leaves open for 1a: architecture, exact
 
 ---
 
-## 1. Delivery: four plans
+## 1. Delivery: five plans
 
-| Plan | Delivers | Depends on |
-|---|---|---|
-| **1. Setup and core file engine** | Dev environment, repository and community files, CI, and the Rust `pulp-core` library: IDs, text and file-name rules, storage, versions, headers, manifest, Library, projects, reconcile rules, item operations, snapshots, operation groups, trash | — |
-| **2. Pulp Markdown** | The written Pulp Markdown definition (prose subset for 1a) and the TypeScript converter between editor and Markdown body, with the round-trip test suite | Plan 1 (header handled by core) |
-| **3. App shell** | Tauri commands over `pulp-core`, command registry, first launch, Library and project screens (a new project opens straight into a first document, "Chapter 1", cursor ready), tree, editor with Write/Revise shells, autosave wiring, snapshot timer, trash view, conflict-free single-device use | Plans 1 and 2 |
-| **4. Technical tests** | Spell-check speed (JavaScript vs Rust), ODT/RTF import quality, Android open-and-save | Plan 1 |
+| Plan | Delivers | Depends on | Status |
+|---|---|---|---|
+| **1. Setup and core file engine** | Dev environment, repository and community files, CI, and the Rust `pulp-core` library: IDs, text and file-name rules, storage, versions, headers, manifest, Library, projects, reconcile rules, item operations, snapshots, operation groups, trash | — | Done |
+| **2. Pulp Markdown** | The written Pulp Markdown definition (prose subset for 1a) and the TypeScript converter between editor and Markdown body, with the round-trip test suite | Plan 1 (header handled by core) | Done |
+| **3a. App plumbing and screens** | Tauri commands over `pulp-core` (the core boundary), command registry, first launch, Library screen, project screen with the tree (add folders and documents, rename, reorder, trash), project and Library trash views (restore, permanent deletion), the read-only refusal for `TooNew` projects, reports for reconcile results (found, missing, duplicates). Documents open in a simple placeholder pane. | Plan 1 | — |
+| **3b. Writing** | The editor (TipTap, matching `pulpSchema`, with a schema-match test) with Write/Revise shells, open and save through Plan 2's converter, protected display of raw blocks, autosave wiring and save-failure warnings, snapshot timer, named snapshots, snapshot restore, and a new project opening straight into its first document, "Chapter 1", cursor ready | Plans 2 and 3a | — |
+| **4. Technical tests** | Spell-check speed (JavaScript vs Rust), ODT/RTF import quality, Android open-and-save | Plan 1 | — |
 
-Plan 4 can run in parallel with Plans 2 and 3. Each plan ends with green tests on Windows, macOS and Linux in CI.
+Plan 3 is split so that 3a gives a clickable app early and each pull request stays reviewable. Before 3a's step-by-step plan is written, simple mockups of the first-launch, Library, project and editor screens are approved by the owner, so the layout is settled before it is built; questions the specs leave open go to the owner.
+
+Plan 4 can run in parallel with Plans 3a and 3b. Each plan ends with green tests on Windows, macOS and Linux in CI.
 
 ---
 
@@ -120,7 +123,7 @@ A folder without `library.json` is not a Library: opening it fails with `NotALib
 `{ "format": 1, "itemId", "originalPath", "originalFolder", "index", "deletedAt", "files": [...], "folderNode"? }`.
 `folderNode` is present only when a whole folder was trashed; it holds that folder's manifest node, so restoring puts the folder back with its contents and order.
 
-Restoring returns the item to its original folder and position (clamped), or to the top level if that folder no longer exists, using the file-name rule on clashes. Permanent deletion and the Library-level trash are Plan 3.
+Restoring returns the item to its original folder and position (clamped), or to the top level if that folder no longer exists, using the file-name rule on clashes. Permanent deletion and the Library-level trash are Plan 3a.
 
 ### 3.8 Companion files
 
@@ -145,7 +148,7 @@ On every project open (master §4.9):
 | Two files, same ID, identical bytes | The newer file is moved to the project trash; reported |
 | Two files, same ID, one with a sync-conflict name (`.sync-conflict-` or `conflicted copy`, case-insensitive) | Both kept, reported as a **conflict** for the conflict screen (1b) |
 | Two files, same ID, different content otherwise | The file with the older modification time keeps the ID; the other gets a new ID and " (copy)" appended to its title; reported |
-| Project `minReader` above this Pulp | Open refused with `TooNew` (read-only view is Plan 3) |
+| Project `minReader` above this Pulp | Open refused with `TooNew` (read-only view is Plan 3a) |
 | Missing standard folders (`.history`, `.trash`) | Recreated; reported |
 
 Presence markers, header re-identification, missing packs and fonts belong to 1b and later.
@@ -163,7 +166,7 @@ Notes and profiles as editors (headers support their `type` already), links, sea
 - On Windows, Gonçalo can create a Library and a project (which opens straight into its first document), add folders and documents, write in Write and Revise modes, rename, reorder, trash and restore items, and restore a snapshot.
 - Closing Pulp mid-typing loses at most the last ~2 seconds, and never corrupts a file.
 - CI is green on Windows, macOS and Linux.
-- The four technical tests have written results in `docs/specs/`.
+- The three technical tests have written results in `docs/specs/`.
 
 ---
 
