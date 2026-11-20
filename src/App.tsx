@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 import { useEffect, useState } from "react";
-import { startup, type Startup } from "./app/core";
+import { startup, type LibraryInfo, type Startup } from "./app/core";
 import { friendlyMessage } from "./app/errors";
 import { handleShortcut } from "./app/commands";
-import { t } from "./i18n/en";
+import Setup from "./screens/Setup";
+import LocateLibrary from "./screens/LocateLibrary";
 
-// Stubs until Tasks 8-11 replace them with the real screens.
-const Setup = ({ defaultPath }: { defaultPath: string }) => <main>Setup: {defaultPath}</main>;
-const LocateLibrary = ({ path }: { path: string }) => <main>{t("library.missing", { path })}</main>;
+// Stub until Task 9 replaces it with the real screen.
 const Library = () => <main>Library</main>;
 
 export default function App() {
   const [s, setS] = useState<Startup | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const done = (library: LibraryInfo) => setS({ state: "ready", library });
 
   useEffect(() => {
     startup().then(setS, (e) => setErr(friendlyMessage(e)));
@@ -27,12 +27,12 @@ export default function App() {
   if (!s) return null;
   switch (s.state) {
     case "firstLaunch":
-      return <Setup defaultPath={s.defaultPath} />;
+      return <Setup defaultPath={s.defaultPath} onDone={done} />;
     case "libraryMissing":
-      return <LocateLibrary path={s.path} />;
+      return <LocateLibrary path={s.path} onDone={done} />;
     case "ready":
       return <Library />;
     case "failed":
-      return <main role="alert">{friendlyMessage(s.error)}</main>;
+      return <LocateLibrary path="" message={friendlyMessage(s.error)} onDone={done} />;
   }
 }
