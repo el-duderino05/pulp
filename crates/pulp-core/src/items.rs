@@ -355,6 +355,29 @@ impl<S: Storage> Project<S> {
         Ok(())
     }
 
+    /// Moves an item or folder to `index` (clamped, counted after it is taken
+    /// out) within its current folder. Only the manifest changes.
+    pub fn reorder(&mut self, id: &Id, index: usize) -> Result<(), ProjectError> {
+        let (parent, _) = self
+            .manifest
+            .parent_of(id)
+            .ok_or_else(|| ProjectError::NotFound(id.clone()))?;
+        let snap = self.capture_state();
+        let node = self
+            .manifest
+            .remove_node(id)
+            .ok_or_else(|| ProjectError::NotFound(id.clone()))?;
+        let saved = self
+            .manifest
+            .insert_node(parent.as_ref(), node, Some(index))
+            .map_err(ProjectError::from)
+            .and_then(|()| self.save_manifest());
+        if saved.is_err() {
+            self.restore(snap);
+        }
+        saved
+    }
+
     /// Reads the file at the indexed path. It must parse, be readable by this
     /// version, and carry `id`; otherwise nothing may be written to it.
     pub(crate) fn read_verified(&self, id: &Id) -> Result<(RelPath, ItemFile), ProjectError> {
