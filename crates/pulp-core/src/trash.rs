@@ -51,11 +51,11 @@ struct Wire {
     folder_node: Option<FolderNode>,
 }
 
-fn trash_root() -> RelPath {
+pub(crate) fn trash_root() -> RelPath {
     RelPath::root().join(TRASH_DIR)
 }
 
-fn entry_dir(entry: &Id) -> RelPath {
+pub(crate) fn entry_dir(entry: &Id) -> RelPath {
     trash_root().join(entry.as_str())
 }
 
@@ -85,7 +85,7 @@ fn is_stored_name(name: &str) -> bool {
 }
 
 /// Reads and checks one entry folder. `None` for anything unusable.
-fn load_entry<S: Storage>(storage: &S, entry_id: &Id) -> Option<TrashEntry> {
+pub(crate) fn load_entry<S: Storage>(storage: &S, entry_id: &Id) -> Option<TrashEntry> {
     let bytes = storage.read(&entry_dir(entry_id).join(ENTRY_FILE)).ok()?;
     let wire: Wire = serde_json::from_slice(&bytes).ok()?;
     if wire.format == 0 || wire.format > FORMAT_VERSION || wire.deleted_at.is_empty() {
@@ -191,7 +191,7 @@ pub fn store_in_trash<S: Storage>(
     }
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -320,6 +320,32 @@ impl<S: Storage> Project<S> {
                 .then_with(|| a.entry_id.cmp(&b.entry_id))
         });
         Ok(out)
+    }
+
+    /// Sends one trash entry to the computer's trash for good. Unknown: `NotFound`.
+    pub fn delete_from_trash(&mut self, entry: &Id) -> Result<(), ProjectError> {
+        let dir = entry_dir(entry);
+        if !self.storage.exists(&dir) {
+            return Err(ProjectError::NotFound(entry.clone()));
+        }
+        Ok(self.storage.discard(&dir)?)
+    }
+
+    /// Sends every trash entry to the computer's trash; returns how many.
+    pub fn empty_trash(&mut self) -> Result<usize, ProjectError> {
+        let names = match self.storage.list(&trash_root()) {
+            Ok(v) => v,
+            Err(e) if e.cause() == ErrorCause::NotFound => return Ok(0),
+            Err(e) => return Err(e.into()),
+        };
+        let mut count = 0;
+        for e in names.iter().filter(|e| e.is_dir) {
+            if let Ok(id) = Id::parse(&e.name) {
+                self.storage.discard(&entry_dir(&id))?;
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// Puts a trashed item or folder back, in its folder and position when
@@ -585,6 +611,9 @@ mod tests {
         }
         fn exists(&self, p: &RelPath) -> bool {
             self.inner.exists(p)
+        }
+        fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+            self.inner.discard(p)
         }
     }
 

@@ -8,11 +8,14 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/gelasio": "5.3.0",
+    "@fontsource/inter": "5.3.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "2.8.4",
     "@tauri-apps/plugin-opener": "^2",
     "markdown-it": "15.0.3",
     "markdown-it-sub": "2.0.0",
@@ -23,11 +26,14 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.13",
     "@types/node": "24.19.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
     "fast-check": "4.10.2",
+    "jsdom": "31.0.1",
     "typescript": "~6.0.3",
     "vite": "^8.0.16",
     "vitest": "5.0.5"

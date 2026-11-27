@@ -176,6 +176,8 @@ pub trait Storage {
     /// left alone and an error is returned.
     fn remove_dir(&self, p: &RelPath) -> Result<(), StorageError>;
     fn exists(&self, p: &RelPath) -> bool;
+    /// Moves a file or a whole folder to the operating system's trash.
+    fn discard(&self, p: &RelPath) -> Result<(), StorageError>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -435,6 +437,24 @@ impl Storage for FsStorage {
 
     fn exists(&self, p: &RelPath) -> bool {
         self.resolve(p).map(|path| path.exists()).unwrap_or(false)
+    }
+
+    fn discard(&self, p: &RelPath) -> Result<(), StorageError> {
+        let path = self.resolve(p)?;
+        #[allow(unused_mut)]
+        let mut ctx = trash::TrashContext::default();
+        // NSFileManager works without the Finder app running.
+        #[cfg(target_os = "macos")]
+        trash::macos::TrashContextExtMacos::set_delete_method(
+            &mut ctx,
+            trash::macos::DeleteMethod::NsFileManager,
+        );
+        ctx.delete(&path).map_err(|e| match e {
+            trash::Error::Os { code, description } => {
+                StorageError::new(classify_os_error(code, CURRENT_OS), p, description)
+            }
+            other => StorageError::Io(p.clone(), other.to_string()),
+        })
     }
 }
 

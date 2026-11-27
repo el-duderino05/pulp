@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0
-/// <reference types="node" />
 import { describe, expect, test } from 'vitest';
 import fc from 'fast-check';
 import { readFileSync, readdirSync } from 'node:fs';
